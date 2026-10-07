@@ -1,76 +1,63 @@
 import '@src/Options.css';
 import { t } from '@extension/i18n';
-import { PROJECT_URL_OBJECT, useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage } from '@extension/storage';
-import { cn, ErrorDisplay, LoadingSpinner, ToggleButton } from '@extension/ui';
+import { useSystemTheme, withErrorBoundary, withSuspense } from '@extension/shared';
+import { cn, ErrorDisplay, LoadingSpinner } from '@extension/ui';
 import { useState, useEffect } from 'react';
 
-interface IconTheme {
-  mode: 'auto' | 'light' | 'dark';
-}
+type IconThemeMode = 'auto' | 'light' | 'dark';
 
 const Options = () => {
-  const { isLight } = useStorage(exampleThemeStorage);
-  const logo = isLight ? 'options/logo_horizontal.svg' : 'options/logo_horizontal_dark.svg';
-  const [iconTheme, setIconTheme] = useState<IconTheme>({ mode: 'auto' });
-
-  const goGithubSite = () => chrome.tabs.create(PROJECT_URL_OBJECT);
+  const { isLight } = useSystemTheme();
+  const [iconMode, setIconMode] = useState<IconThemeMode>('auto');
 
   // 加载图标主题设置
   useEffect(() => {
-    chrome.runtime.sendMessage({ type: 'GET_ICON_THEME' }, (response) => {
-      if (response?.theme) {
-        setIconTheme(response.theme);
+    chrome.runtime.sendMessage({ type: 'GET_ICON_THEME' }, response => {
+      if (response?.theme?.mode) {
+        setIconMode(response.theme.mode);
       }
     });
   }, []);
 
   // 设置图标主题
-  const setIconThemeMode = (mode: 'auto' | 'light' | 'dark') => {
-    const newTheme = { mode };
-    chrome.runtime.sendMessage(
-      { type: 'SET_ICON_THEME', theme: newTheme },
-      (response) => {
-        if (response?.success) {
-          setIconTheme(newTheme);
-        }
+  const changeIconMode = (mode: IconThemeMode) => {
+    chrome.runtime.sendMessage({ type: 'SET_ICON_THEME', theme: { mode } }, response => {
+      if (response?.success) {
+        setIconMode(mode);
       }
-    );
+    });
   };
+
+  const options: { value: IconThemeMode; label: string }[] = [
+    { value: 'auto', label: t('iconThemeAuto') },
+    { value: 'light', label: t('iconThemeLight') },
+    { value: 'dark', label: t('iconThemeDark') },
+  ];
 
   return (
     <div className={cn('App', isLight ? 'bg-slate-50 text-gray-900' : 'bg-gray-800 text-gray-100')}>
-      <button onClick={goGithubSite}>
-        <img src={chrome.runtime.getURL(logo)} className="App-logo" alt="logo" />
-      </button>
-      <p>
-        Edit <code>pages/options/src/Options.tsx</code>
-      </p>
-      <ToggleButton onClick={exampleThemeStorage.toggle}>{t('toggleTheme')}</ToggleButton>
-      
-      {/* 图标主题设置 */}
-      <div className="mt-6">
-        <h3 className="text-lg font-semibold mb-3">图标主题</h3>
-        <div className="space-y-2">
-          {[
-            { value: 'auto', label: '跟随系统' },
-            { value: 'light', label: '浅色' },
-            { value: 'dark', label: '深色' }
-          ].map(({ value, label }) => (
-            <label key={value} className="flex items-center space-x-2 cursor-pointer">
+      <h1 className="mb-8 text-2xl font-semibold">📚 {t('optionsTitle')}</h1>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-lg font-semibold">{t('iconTheme')}</h2>
+        <div className="space-y-2 text-left">
+          {options.map(({ value, label }) => (
+            <label key={value} className="flex cursor-pointer items-center space-x-2">
               <input
                 type="radio"
                 name="iconTheme"
                 value={value}
-                checked={iconTheme.mode === value}
-                onChange={() => setIconThemeMode(value as any)}
-                className="w-4 h-4"
+                checked={iconMode === value}
+                onChange={() => changeIconMode(value)}
+                className="size-4"
               />
               <span>{label}</span>
             </label>
           ))}
         </div>
-      </div>
+      </section>
+
+      <p className="text-sm opacity-70">{t('shortcutHint')}</p>
     </div>
   );
 };

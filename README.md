@@ -1,30 +1,32 @@
-# Chrome Extension Learning Project
+# Read Later
 
-This is a personal learning project for developing Chrome extensions using React and Vite.
+一个 Chrome 扩展（Manifest V3）：把网页存起来，稍后阅读。基于 React 19 + Vite + Turbo。
 
-## Getting Started
+## 功能
+
+- **三种保存方式**：右键菜单「保存到稍后阅读」（页面或链接）、快捷键 `Ctrl+Shift+S`（Mac：`⌘+Shift+S`）、弹窗里的「保存页面」按钮。三个入口共用同一套规则：只保存 http/https 网页，同一网址不会重复保存；保存结果会短暂显示在工具栏图标角标上（✓ 成功 / = 已存在 / ! 无法保存）。
+- **自动标签**：按域名识别常见网站（视频、音频、社交、开发、购物、新闻、文档等），识别不到的归为「Web Page」。
+- **手动标签与备注**：编辑页面时可改标题、增删标签、写备注。
+- **已读 / 未读**：打开链接即标为已读，也可手动切换；可按未读 / 已读筛选。
+- **搜索、标签筛选、排序**：搜索覆盖标题、网址、标签、备注；可按保存时间升序或降序。
+- **导入 / 导出**：JSON 格式。导入会校验格式，按网址去重，并重新生成编号。
+- **中英文界面**，弹窗和设置页跟随系统浅色 / 深色，工具栏图标可在设置页指定。
+
+## 开发
 
 ```bash
-# Install dependencies
 pnpm install
-
-# Run development mode
-pnpm dev
-
-# Build extension
-pnpm build
+pnpm dev      # 开发模式
+pnpm build    # 构建到 dist/
 ```
 
-## Project Structure
+在 `chrome://extensions/` 打开「开发者模式」，选择「加载已解压的扩展程序」，指向 `dist/` 目录。
 
-- `chrome-extension/` - Extension manifest and background scripts
-- `pages/` - Extension pages (popup, options, content scripts, etc.)
-- `packages/` - Shared utilities and modules
+## 结构
 
-## Learning Goals
-
-- Understanding Chrome Extension development
-- Working with React in extension environment
-- Managing extension permissions and APIs
-- Content script injection and communication
-- Extension packaging and deployment
+- `chrome-extension/`：manifest 与后台脚本（右键菜单、快捷键、图标角标、图标主题）
+- `pages/popup/`：弹窗（全部业务界面）
+- `pages/options/`：设置页（工具栏图标主题）
+- `packages/storage/`：数据模型、自动标签、存储读写
+- `packages/i18n/`：多语言文案（英文为默认，中文完整；韩文缺失的词条回退到英文）
+- 其余 `packages/*` 为构建工具链（Vite 配置、热更新、打包等）

@@ -1,5 +1,5 @@
 import 'webextension-polyfill';
-import { exampleThemeStorage, readLaterStorage } from '@extension/storage';
+import { readLaterStorage, type SaveResult } from '@extension/storage';
 
 // 图标主题管理
 interface IconTheme {
@@ -29,9 +29,12 @@ async function setIcon(theme: 'light' | 'dark') {
   }
 }
 
-// 检测系统主题
-function getSystemTheme(): 'light' | 'dark' {
-  return 'light'; // 默认浅色，因为 background script 无法直接访问 matchMedia
+// 系统主题：service worker 拿不到 matchMedia，由 popup / 设置页打开时上报并缓存在这里
+const SYSTEM_THEME_KEY = 'systemTheme';
+
+async function getSystemTheme(): Promise<'light' | 'dark'> {
+  const stored = await chrome.storage.local.get(SYSTEM_THEME_KEY);
+  return stored[SYSTEM_THEME_KEY] === 'dark' ? 'dark' : 'light';
 }
 
 // 初始化图标主题
@@ -43,7 +46,7 @@ async function initializeIconTheme() {
     let targetTheme: 'light' | 'dark';
     
     if (iconTheme.mode === 'auto') {
-      targetTheme = getSystemTheme();
+      targetTheme = await getSystemTheme();
     } else {
       targetTheme = iconTheme.mode;
     }
@@ -65,6 +68,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
   
+  if (message.type === 'SYSTEM_THEME') {
+    const theme = message.theme === 'dark' ? 'dark' : 'light';
+    chrome.storage.local.set({ [SYSTEM_THEME_KEY]: theme }).then(() => {
+      initializeIconTheme();
+      sendResponse({ success: true });
+    });
+    return true;
+  }
+
   if (message.type === 'GET_ICON_THEME') {
     chrome.storage.local.get(ICON_THEME_KEY).then(stored => {
       const iconTheme: IconTheme = stored[ICON_THEME_KEY] || { mode: 'auto' };
@@ -83,14 +95,9 @@ chrome.runtime.onInstalled.addListener(() => {
   // 创建右键菜单
   chrome.contextMenus.create({
     id: 'save-to-read-later',
-    title: 'Save to Read Later',
+    title: chrome.i18n.getMessage('contextMenuTitle'),
     contexts: ['page', 'link'],
   });
-});
-
-// 保持原有功能
-exampleThemeStorage.get().then(theme => {
-  console.log('theme', theme);
 });
 
 // ============ Read Later 功能 ============
@@ -105,8 +112,40 @@ function getFaviconUrl(url: string): string {
   }
 }
 
+// 在图标上短暂显示保存结果，让用户知道有没有成功
+async function showBadge(text: string, color: string) {
+  try {
+    await chrome.action.setBadgeBackgroundColor({ color });
+    await chrome.action.setBadgeText({ text });
+    setTimeout(() => {
+      chrome.action.setBadgeText({ text: '' }).catch(() => undefined);
+    }, 2000);
+  } catch (error) {
+    console.error('Failed to set badge:', error);
+  }
+}
+
+// 统一的保存入口：保存并把结果反馈到图标上
+async function savePageWithFeedback(page: { url?: string; title?: string; favicon?: string }): Promise<SaveResult> {
+  const url = page.url ?? '';
+  const result = await readLaterStorage.savePage({
+    url,
+    title: page.title || url,
+    favicon: page.favicon || getFaviconUrl(url),
+  });
+
+  if (result === 'saved') {
+    await showBadge('✓', '#16a34a');
+  } else if (result === 'duplicate') {
+    await showBadge('=', '#ca8a04');
+  } else {
+    await showBadge('!', '#dc2626');
+  }
+  return result;
+}
+
 // 保存当前页面
-async function saveCurrentPage(tab?: chrome.tabs.Tab) {
+async function saveCurrentPage(tab?: chrome.tabs.Tab): Promise<SaveResult> {
   try {
     // 如果没有传入 tab，获取当前活动标签页
     if (!tab) {
@@ -114,57 +153,28 @@ async function saveCurrentPage(tab?: chrome.tabs.Tab) {
       tab = activeTab;
     }
 
-    if (!tab || !tab.url || !tab.title) {
-      throw new Error('Invalid tab');
-    }
-
-    // 过滤掉 chrome:// 等特殊页面
-    if (tab.url.startsWith('chrome://') || tab.url.startsWith('about:') || tab.url.startsWith('edge://')) {
-      throw new Error('Cannot save special pages');
-    }
-
-    // 保存页面
-    await readLaterStorage.addPage({
-      url: tab.url,
-      title: tab.title,
-      favicon: tab.favIconUrl || getFaviconUrl(tab.url),
-      tags: [],
-    });
-
-    console.log('✅ Page saved successfully:', tab.title);
+    return await savePageWithFeedback({ url: tab?.url, title: tab?.title, favicon: tab?.favIconUrl });
   } catch (error) {
     console.error('Failed to save page:', error);
+    await showBadge('!', '#dc2626');
+    return 'unsupported';
   }
 }
 
 // 监听右键菜单点击
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  try {
-    if (info.menuItemId !== 'save-to-read-later') {
-      return;
-    }
+  if (info.menuItemId !== 'save-to-read-later') {
+    return;
+  }
 
-    if (info.linkUrl) {
-      // 如果是在链接上右键，保存链接
-      readLaterStorage
-        .addPage({
-          url: info.linkUrl,
-          title: info.linkUrl,
-          favicon: getFaviconUrl(info.linkUrl),
-          tags: [],
-        })
-        .then(() => {
-          console.log('✅ Link saved:', info.linkUrl);
-        })
-        .catch(error => {
-          console.error('❌ Failed to save link:', error);
-        });
-    } else if (tab) {
-      // 否则保存当前页面
-      saveCurrentPage(tab);
-    }
-  } catch (error) {
-    console.error('❌ Context menu error:', error);
+  if (info.linkUrl) {
+    // 在链接上右键：保存链接（拿不到目标页标题，用网址代替）
+    savePageWithFeedback({ url: info.linkUrl, title: info.linkUrl }).catch(error => {
+      console.error('Failed to save link:', error);
+      showBadge('!', '#dc2626');
+    });
+  } else if (tab) {
+    saveCurrentPage(tab);
   }
 });
 
@@ -177,13 +187,9 @@ chrome.commands.onCommand.addListener((command) => {
 
 // 监听来自 popup 的消息
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  // ... 已有的图标主题处理代码会在上面
-
   if (message.type === 'SAVE_CURRENT_PAGE') {
-    saveCurrentPage().then(() => {
-      sendResponse({ success: true });
-    }).catch(error => {
-      sendResponse({ success: false, error: error.message });
+    saveCurrentPage().then(result => {
+      sendResponse({ success: result === 'saved', result });
     });
     return true;
   }

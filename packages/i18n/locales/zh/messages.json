@@ -119,5 +119,83 @@
   },
   "visitPage": {
     "message": "访问页面"
+  },
+  "contextMenuTitle": {
+    "message": "保存到稍后阅读"
+  },
+  "commandSavePage": {
+    "message": "把当前页面保存到稍后阅读"
+  },
+  "pageAlreadySaved": {
+    "message": "这个页面已经保存过了"
+  },
+  "pageCannotBeSaved": {
+    "message": "这个页面无法保存"
+  },
+  "importSummary": {
+    "message": "已导入 $1 条，跳过 $2 条"
+  },
+  "dateToday": {
+    "message": "今天"
+  },
+  "dateYesterday": {
+    "message": "昨天"
+  },
+  "dateDaysAgo": {
+    "message": "$1 天前"
+  },
+  "autoTags": {
+    "message": "自动标签"
+  },
+  "visited": {
+    "message": "已读"
+  },
+  "unread": {
+    "message": "未读"
+  },
+  "read": {
+    "message": "已读"
+  },
+  "markRead": {
+    "message": "标为已读"
+  },
+  "markUnread": {
+    "message": "标为未读"
+  },
+  "sortNewest": {
+    "message": "最新在前"
+  },
+  "sortOldest": {
+    "message": "最早在前"
+  },
+  "sortLabel": {
+    "message": "排序"
+  },
+  "showMoreTags": {
+    "message": "更多"
+  },
+  "showLessTags": {
+    "message": "收起"
+  },
+  "pageTitle": {
+    "message": "标题"
+  },
+  "optionsTitle": {
+    "message": "稍后阅读设置"
+  },
+  "iconTheme": {
+    "message": "工具栏图标"
+  },
+  "iconThemeAuto": {
+    "message": "跟随系统"
+  },
+  "iconThemeLight": {
+    "message": "浅色"
+  },
+  "iconThemeDark": {
+    "message": "深色"
+  },
+  "shortcutHint": {
+    "message": "保存快捷键：Ctrl+Shift+S（Mac：⌘+Shift+S）"
   }
 }

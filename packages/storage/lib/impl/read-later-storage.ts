@@ -16,82 +16,105 @@ export interface SavedPage {
 // Read Later 状态类型
 export interface ReadLaterState {
   pages: SavedPage[];
-  allTags: string[]; // 所有使用过的标签
+  allTags: string[]; // 所有使用过的标签（始终由 pages 推导，不单独维护）
 }
 
-// 智能分类：根据 URL 识别内容类型和来源
+// 保存结果
+export type SaveResult = 'saved' | 'duplicate' | 'unsupported';
+
+// 只允许保存普通网页，chrome://、file://、about: 等一律拒绝
+export function isSavableUrl(url: string | undefined): url is string {
+  if (!url) return false;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+// 域名匹配：example.com 同时匹配 example.com 和 *.example.com，不会误中 dropbox.com 这类
+function hostIs(hostname: string, ...domains: string[]): boolean {
+  return domains.some(d => hostname === d || hostname.endsWith(`.${d}`));
+}
+
+// 智能分类：根据 URL 域名和标题识别内容类型和来源
 export function generateAutoTags(url: string, title: string): string[] {
   const autoTags: string[] = [];
-  const urlLower = url.toLowerCase();
   const titleLower = title.toLowerCase();
 
+  let hostname = '';
+  let pathname = '';
+  try {
+    const parsed = new URL(url);
+    hostname = parsed.hostname.toLowerCase();
+    pathname = parsed.pathname.toLowerCase();
+  } catch {
+    // URL 无法解析时只按标题识别
+  }
+
   // 识别视频网站
-  if (urlLower.includes('youtube.com') || urlLower.includes('youtu.be')) {
+  if (hostIs(hostname, 'youtube.com', 'youtu.be')) {
     autoTags.push('🎬 Video', '📺 YouTube');
-  } else if (urlLower.includes('vimeo.com')) {
+  } else if (hostIs(hostname, 'vimeo.com')) {
     autoTags.push('🎬 Video', '📺 Vimeo');
-  } else if (urlLower.includes('bilibili.com')) {
+  } else if (hostIs(hostname, 'bilibili.com')) {
     autoTags.push('🎬 Video', '📺 Bilibili');
-  } else if (urlLower.includes('tiktok.com')) {
+  } else if (hostIs(hostname, 'tiktok.com')) {
     autoTags.push('🎬 Video', '📱 TikTok');
   }
 
   // 识别音乐/音频网站
-  if (urlLower.includes('spotify.com')) {
+  if (hostIs(hostname, 'spotify.com')) {
     autoTags.push('🎵 Audio', '🎧 Spotify');
-  } else if (urlLower.includes('soundcloud.com')) {
+  } else if (hostIs(hostname, 'soundcloud.com')) {
     autoTags.push('🎵 Audio', '🎧 SoundCloud');
-  } else if (urlLower.includes('music.apple.com')) {
+  } else if (hostIs(hostname, 'music.apple.com')) {
     autoTags.push('🎵 Audio', '🎧 Apple Music');
   }
 
   // 识别社交媒体
-  if (urlLower.includes('twitter.com') || urlLower.includes('x.com')) {
+  if (hostIs(hostname, 'twitter.com', 'x.com')) {
     autoTags.push('📱 Social', '🐦 X/Twitter');
-  } else if (urlLower.includes('facebook.com')) {
+  } else if (hostIs(hostname, 'facebook.com')) {
     autoTags.push('📱 Social', '👥 Facebook');
-  } else if (urlLower.includes('instagram.com')) {
+  } else if (hostIs(hostname, 'instagram.com')) {
     autoTags.push('📱 Social', '📸 Instagram');
-  } else if (urlLower.includes('reddit.com')) {
+  } else if (hostIs(hostname, 'reddit.com')) {
     autoTags.push('📱 Social', '🤖 Reddit');
-  } else if (urlLower.includes('linkedin.com')) {
+  } else if (hostIs(hostname, 'linkedin.com')) {
     autoTags.push('📱 Social', '💼 LinkedIn');
   }
 
   // 识别开发者网站
-  if (urlLower.includes('github.com')) {
+  if (hostIs(hostname, 'github.com')) {
     autoTags.push('💻 Dev', '🐙 GitHub');
-  } else if (urlLower.includes('stackoverflow.com')) {
+  } else if (hostIs(hostname, 'stackoverflow.com')) {
     autoTags.push('💻 Dev', '📚 Stack Overflow');
-  } else if (urlLower.includes('dev.to')) {
+  } else if (hostIs(hostname, 'dev.to')) {
     autoTags.push('💻 Dev', '📝 Dev.to');
-  } else if (urlLower.includes('medium.com')) {
+  } else if (hostIs(hostname, 'medium.com')) {
     autoTags.push('📝 Article', '📰 Medium');
   }
 
   // 识别购物网站
-  if (urlLower.includes('amazon.com')) {
+  if (hostIs(hostname, 'amazon.com')) {
     autoTags.push('🛒 Shopping', '📦 Amazon');
-  } else if (urlLower.includes('taobao.com') || urlLower.includes('tmall.com')) {
+  } else if (hostIs(hostname, 'taobao.com', 'tmall.com')) {
     autoTags.push('🛒 Shopping', '🛍️ Taobao');
-  } else if (urlLower.includes('jd.com')) {
+  } else if (hostIs(hostname, 'jd.com')) {
     autoTags.push('🛒 Shopping', '🛍️ JD');
   }
 
-  // 识别新闻网站
-  if (
-    urlLower.includes('news') ||
-    urlLower.includes('cnn.com') ||
-    urlLower.includes('bbc.com') ||
-    urlLower.includes('nytimes.com')
-  ) {
+  // 识别新闻网站（只看域名，不看路径，避免 /newsletter 之类误判）
+  if (hostIs(hostname, 'cnn.com', 'bbc.com', 'nytimes.com') || /(^|[.-])news([.-]|$)/.test(hostname)) {
     autoTags.push('📰 News');
   }
 
   // 识别文档和 PDF
-  if (urlLower.endsWith('.pdf')) {
+  if (pathname.endsWith('.pdf')) {
     autoTags.push('📄 PDF');
-  } else if (urlLower.includes('docs.google.com')) {
+  } else if (hostIs(hostname, 'docs.google.com')) {
     autoTags.push('📄 Document', '📝 Google Docs');
   }
 
@@ -107,7 +130,8 @@ export function generateAutoTags(url: string, title: string): string[] {
     autoTags.push('🌐 Web Page');
   }
 
-  return autoTags;
+  // 去重（比如 Medium 和标题 article 会重复）
+  return Array.from(new Set(autoTags));
 }
 
 // 创建存储
@@ -123,12 +147,59 @@ const storage = createStorage<ReadLaterState>(
   },
 );
 
+const createId = () => `page-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
+// allTags 永远由页面推导，避免删除/改标签后残留
+const withDerivedTags = (pages: SavedPage[]): ReadLaterState => ({
+  pages,
+  allTags: Array.from(new Set(pages.flatMap(p => p.tags))),
+});
+
+const asStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+
+// 把导入的一条数据清洗成合法页面，不合法则丢弃
+const sanitizeImportedPage = (raw: unknown): SavedPage | null => {
+  if (!raw || typeof raw !== 'object') return null;
+  const item = raw as Record<string, unknown>;
+  if (typeof item.url !== 'string' || !isSavableUrl(item.url)) return null;
+
+  const title = typeof item.title === 'string' && item.title ? item.title : item.url;
+  return {
+    id: createId(), // 一律重新生成，避免与现有数据 id 冲突
+    url: item.url,
+    title,
+    favicon: typeof item.favicon === 'string' ? item.favicon : undefined,
+    tags: asStringArray(item.tags),
+    autoTags: asStringArray(item.autoTags).length ? asStringArray(item.autoTags) : generateAutoTags(item.url, title),
+    savedAt: typeof item.savedAt === 'number' ? item.savedAt : Date.now(),
+    visitedAt: typeof item.visitedAt === 'number' ? item.visitedAt : undefined,
+    notes: typeof item.notes === 'string' ? item.notes : undefined,
+  };
+};
+
+// 同一个上下文内的写入排队执行；每次写入前重新读取最新数据，
+// 避免 background 和 popup 同时写时互相覆盖
+let writeQueue: Promise<unknown> = Promise.resolve();
+const mutate = <T>(fn: (pages: SavedPage[]) => { pages: SavedPage[]; result: T }): Promise<T> => {
+  const run = async () => {
+    const fresh = await storage.get();
+    const { pages, result } = fn(fresh.pages);
+    await storage.set(() => withDerivedTags(pages));
+    return result;
+  };
+  const next = writeQueue.then(run, run);
+  writeQueue = next.catch(() => undefined);
+  return next;
+};
+
 // Read Later 存储类型
 export interface ReadLaterStorageType {
   get: typeof storage.get;
   set: typeof storage.set;
   subscribe: typeof storage.subscribe;
-  addPage: (page: Omit<SavedPage, 'id' | 'savedAt' | 'autoTags'>) => Promise<void>;
+  getSnapshot: typeof storage.getSnapshot;
+  savePage: (page: { url: string; title: string; favicon?: string }) => Promise<SaveResult>;
   removePage: (id: string) => Promise<void>;
   updatePage: (id: string, updates: Partial<SavedPage>) => Promise<void>;
   addTag: (pageId: string, tag: string) => Promise<void>;
@@ -137,71 +208,55 @@ export interface ReadLaterStorageType {
   getPagesByTag: (tag: string) => Promise<SavedPage[]>;
   getPagesByAutoTag: (autoTag: string) => Promise<SavedPage[]>;
   exportData: () => Promise<string>;
-  importData: (jsonData: string) => Promise<void>;
+  importData: (jsonData: string) => Promise<{ added: number; skipped: number }>;
 }
 
 // 导出 Read Later 存储
 export const readLaterStorage: ReadLaterStorageType = {
   ...storage,
 
-  // 添加页面
-  addPage: async page => {
-    await storage.set(currentState => {
+  // 保存页面：所有入口（右键、快捷键、popup 按钮）统一走这里，统一做过滤和去重
+  savePage: ({ url, title, favicon }) =>
+    mutate(pages => {
+      if (!isSavableUrl(url)) return { pages, result: 'unsupported' as SaveResult };
+      if (pages.some(p => p.url === url)) return { pages, result: 'duplicate' as SaveResult };
+
       const newPage: SavedPage = {
-        ...page,
-        id: `page-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        id: createId(),
+        url,
+        title: title || url,
+        favicon,
+        tags: [],
+        autoTags: generateAutoTags(url, title || url),
         savedAt: Date.now(),
-        autoTags: generateAutoTags(page.url, page.title),
       };
-
-      // 更新所有标签列表
-      const allTags = new Set([...currentState.allTags, ...page.tags]);
-
-      return {
-        pages: [newPage, ...currentState.pages],
-        allTags: Array.from(allTags),
-      };
-    });
-  },
+      return { pages: [newPage, ...pages], result: 'saved' as SaveResult };
+    }),
 
   // 删除页面
-  removePage: async id => {
-    await storage.set(currentState => ({
-      ...currentState,
-      pages: currentState.pages.filter(p => p.id !== id),
-    }));
-  },
+  removePage: id =>
+    mutate(pages => ({ pages: pages.filter(p => p.id !== id), result: undefined })),
 
   // 更新页面
-  updatePage: async (id, updates) => {
-    await storage.set(currentState => ({
-      ...currentState,
-      pages: currentState.pages.map(p => (p.id === id ? { ...p, ...updates } : p)),
-    }));
-  },
+  updatePage: (id, updates) =>
+    mutate(pages => ({
+      pages: pages.map(p => (p.id === id ? { ...p, ...updates, id: p.id } : p)),
+      result: undefined,
+    })),
 
   // 添加标签
-  addTag: async (pageId, tag) => {
-    await storage.set(currentState => {
-      const allTags = new Set([...currentState.allTags, tag]);
-      return {
-        pages: currentState.pages.map(p =>
-          p.id === pageId ? { ...p, tags: [...p.tags, tag] } : p,
-        ),
-        allTags: Array.from(allTags),
-      };
-    });
-  },
+  addTag: (pageId, tag) =>
+    mutate(pages => ({
+      pages: pages.map(p => (p.id === pageId && !p.tags.includes(tag) ? { ...p, tags: [...p.tags, tag] } : p)),
+      result: undefined,
+    })),
 
   // 移除标签
-  removeTag: async (pageId, tag) => {
-    await storage.set(currentState => ({
-      ...currentState,
-      pages: currentState.pages.map(p =>
-        p.id === pageId ? { ...p, tags: p.tags.filter(t => t !== tag) } : p,
-      ),
-    }));
-  },
+  removeTag: (pageId, tag) =>
+    mutate(pages => ({
+      pages: pages.map(p => (p.id === pageId ? { ...p, tags: p.tags.filter(t => t !== tag) } : p)),
+      result: undefined,
+    })),
 
   // 搜索页面
   searchPages: async query => {
@@ -235,16 +290,36 @@ export const readLaterStorage: ReadLaterStorageType = {
     return JSON.stringify(state, null, 2);
   },
 
-  // 导入数据
+  // 导入数据：校验格式、重新生成 id、按网址去重
   importData: async jsonData => {
+    let parsed: unknown;
     try {
-      const importedState: ReadLaterState = JSON.parse(jsonData);
-      await storage.set(currentState => ({
-        pages: [...importedState.pages, ...currentState.pages],
-        allTags: Array.from(new Set([...importedState.allTags, ...currentState.allTags])),
-      }));
-    } catch (error) {
+      parsed = JSON.parse(jsonData);
+    } catch {
       throw new Error('Invalid JSON data');
     }
+
+    const rawPages = (parsed as { pages?: unknown } | null)?.pages;
+    if (!Array.isArray(rawPages)) {
+      throw new Error('Invalid data format');
+    }
+
+    return mutate(pages => {
+      const knownUrls = new Set(pages.map(p => p.url));
+      const incoming: SavedPage[] = [];
+      let skipped = 0;
+
+      for (const raw of rawPages) {
+        const page = sanitizeImportedPage(raw);
+        if (!page || knownUrls.has(page.url)) {
+          skipped += 1;
+          continue;
+        }
+        knownUrls.add(page.url);
+        incoming.push(page);
+      }
+
+      return { pages: [...incoming, ...pages], result: { added: incoming.length, skipped } };
+    });
   },
 };

@@ -119,5 +119,83 @@
   },
   "visitPage": {
     "message": "Visit Page"
+  },
+  "contextMenuTitle": {
+    "message": "Save to Read Later"
+  },
+  "commandSavePage": {
+    "message": "Save current page to Read Later"
+  },
+  "pageAlreadySaved": {
+    "message": "This page is already saved"
+  },
+  "pageCannotBeSaved": {
+    "message": "This page cannot be saved"
+  },
+  "importSummary": {
+    "message": "Imported $1 pages, skipped $2"
+  },
+  "dateToday": {
+    "message": "Today"
+  },
+  "dateYesterday": {
+    "message": "Yesterday"
+  },
+  "dateDaysAgo": {
+    "message": "$1 days ago"
+  },
+  "autoTags": {
+    "message": "Auto Tags"
+  },
+  "visited": {
+    "message": "Visited"
+  },
+  "unread": {
+    "message": "Unread"
+  },
+  "read": {
+    "message": "Read"
+  },
+  "markRead": {
+    "message": "Mark read"
+  },
+  "markUnread": {
+    "message": "Mark unread"
+  },
+  "sortNewest": {
+    "message": "Newest first"
+  },
+  "sortOldest": {
+    "message": "Oldest first"
+  },
+  "sortLabel": {
+    "message": "Sort"
+  },
+  "showMoreTags": {
+    "message": "More"
+  },
+  "showLessTags": {
+    "message": "Less"
+  },
+  "pageTitle": {
+    "message": "Title"
+  },
+  "optionsTitle": {
+    "message": "Read Later Settings"
+  },
+  "iconTheme": {
+    "message": "Toolbar icon"
+  },
+  "iconThemeAuto": {
+    "message": "Follow system"
+  },
+  "iconThemeLight": {
+    "message": "Light"
+  },
+  "iconThemeDark": {
+    "message": "Dark"
+  },
+  "shortcutHint": {
+    "message": "Save shortcut: Ctrl+Shift+S (Mac: ⌘+Shift+S)"
   }
 }

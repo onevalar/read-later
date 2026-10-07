@@ -22,12 +22,6 @@ const manifest = {
   manifest_version: 3,
   default_locale: 'en',
   name: '__MSG_extensionName__',
-  browser_specific_settings: {
-    gecko: {
-      id: 'example@example.com',
-      strict_min_version: '109.0',
-    },
-  },
   version: packageJson.version,
   description: '__MSG_extensionDescription__',
   permissions: ['storage', 'contextMenus', 'tabs', 'activeTab'],
@@ -38,7 +32,7 @@ const manifest = {
         default: 'Ctrl+Shift+S',
         mac: 'Command+Shift+S',
       },
-      description: 'Save current page to Read Later',
+      description: '__MSG_commandSavePage__',
     },
   },
   background: {

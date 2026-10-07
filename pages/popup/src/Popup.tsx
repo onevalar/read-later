@@ -1,21 +1,30 @@
 import '@src/Popup.css';
 import { t } from '@extension/i18n';
-import { useStorage, withErrorBoundary, withSuspense } from '@extension/shared';
-import { exampleThemeStorage, readLaterStorage, type SavedPage } from '@extension/storage';
+import { useStorage, useSystemTheme, withErrorBoundary, withSuspense } from '@extension/shared';
+import { readLaterStorage, type SavedPage } from '@extension/storage';
 import { cn, ErrorDisplay, LoadingSpinner } from '@extension/ui';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 
 const Popup = () => {
-  const { isLight } = useStorage(exampleThemeStorage);
+  const { isLight } = useSystemTheme();
   const readLaterState = useStorage(readLaterStorage);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFilter, setSelectedFilter] = useState<string>('all');
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'all' | 'unread' | 'read'>('all');
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [tagsExpanded, setTagsExpanded] = useState(false);
+  const [editingTitle, setEditingTitle] = useState('');
   const [editingTags, setEditingTags] = useState<string[]>([]);
   const [newTag, setNewTag] = useState('');
   const [editingNotes, setEditingNotes] = useState('');
   const [deletingPageId, setDeletingPageId] = useState<string | null>(null);
+  const deleteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (deleteTimerRef.current) clearTimeout(deleteTimerRef.current);
+  }, []);
 
   // 获取所有唯一的标签（包括自动标签和用户标签）
   const allTags = useMemo(() => {
@@ -46,6 +55,13 @@ const Popup = () => {
       );
     }
 
+    // 按已读/未读过滤（没有访问记录 = 未读）
+    if (statusFilter === 'unread') {
+      pages = pages.filter(page => !page.visitedAt);
+    } else if (statusFilter === 'read') {
+      pages = pages.filter(page => !!page.visitedAt);
+    }
+
     // 按搜索查询过滤
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
@@ -59,33 +75,46 @@ const Popup = () => {
       );
     }
 
-    return pages;
-  }, [readLaterState.pages, selectedFilter, searchQuery]);
+    // 排序：保存时间
+    return [...pages].sort((a, b) => (sortOrder === 'newest' ? b.savedAt - a.savedAt : a.savedAt - b.savedAt));
+  }, [readLaterState.pages, selectedFilter, searchQuery, statusFilter, sortOrder]);
+
+  const unreadCount = useMemo(() => readLaterState.pages.filter(p => !p.visitedAt).length, [readLaterState.pages]);
 
   // 删除页面 - 第一次点击显示确认，第二次点击真正删除
   const handleDeletePage = async (id: string) => {
+    if (deleteTimerRef.current) {
+      clearTimeout(deleteTimerRef.current);
+      deleteTimerRef.current = null;
+    }
+
     if (deletingPageId === id) {
       // 第二次点击，真正删除
       await readLaterStorage.removePage(id);
       setDeletingPageId(null);
     } else {
-      // 第一次点击，显示确认状态
+      // 第一次点击，显示确认状态；5秒后自动取消（切换到别的条目时会先清掉旧计时）
       setDeletingPageId(id);
-      // 5秒后自动取消确认状态
-      setTimeout(() => {
+      deleteTimerRef.current = setTimeout(() => {
         setDeletingPageId(null);
+        deleteTimerRef.current = null;
       }, 5000);
     }
   };
 
   // 取消删除
   const handleCancelDelete = () => {
+    if (deleteTimerRef.current) {
+      clearTimeout(deleteTimerRef.current);
+      deleteTimerRef.current = null;
+    }
     setDeletingPageId(null);
   };
 
   // 开始编辑
   const handleStartEdit = (page: SavedPage) => {
     setEditingPageId(page.id);
+    setEditingTitle(page.title);
     setEditingTags([...page.tags]);
     setEditingNotes(page.notes || '');
     setNewTag('');
@@ -95,6 +124,7 @@ const Popup = () => {
   const handleSaveEdit = async () => {
     if (editingPageId) {
       await readLaterStorage.updatePage(editingPageId, {
+        title: editingTitle.trim() || undefined,
         tags: editingTags,
         notes: editingNotes,
       });
@@ -107,6 +137,7 @@ const Popup = () => {
     setEditingPageId(null);
     setEditingTags([]);
     setEditingNotes('');
+    setEditingTitle('');
     setNewTag('');
   };
 
@@ -145,8 +176,8 @@ const Popup = () => {
       if (file) {
         const text = await file.text();
         try {
-          await readLaterStorage.importData(text);
-          alert(t('importSuccess'));
+          const { added, skipped } = await readLaterStorage.importData(text);
+          alert(skipped > 0 ? t('importSummary', [String(added), String(skipped)]) : t('importSuccess'));
         } catch (error) {
           alert(t('importError'));
         }
@@ -158,20 +189,16 @@ const Popup = () => {
   // 保存当前页面
   const handleSaveCurrentPage = async () => {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.url && tab.title) {
-      // 检查是否已经保存过
-      const isDuplicate = readLaterState.pages.some(page => page.url === tab.url);
-      if (isDuplicate) {
-        alert('This page is already saved!');
-        return;
-      }
+    const result = await readLaterStorage.savePage({
+      url: tab?.url ?? '',
+      title: tab?.title ?? '',
+      favicon: tab?.favIconUrl,
+    });
 
-      await readLaterStorage.addPage({
-        url: tab.url,
-        title: tab.title,
-        favicon: tab.favIconUrl,
-        tags: [],
-      });
+    if (result === 'duplicate') {
+      alert(t('pageAlreadySaved'));
+    } else if (result === 'unsupported') {
+      alert(t('pageCannotBeSaved'));
     }
   };
 
@@ -181,6 +208,11 @@ const Popup = () => {
     readLaterStorage.updatePage(pageId, { visitedAt: Date.now() });
   };
 
+  // 切换已读/未读
+  const handleToggleRead = (page: SavedPage) => {
+    readLaterStorage.updatePage(page.id, { visitedAt: page.visitedAt ? undefined : Date.now() });
+  };
+
   // 格式化日期
   const formatDate = (timestamp: number) => {
     const date = new Date(timestamp);
@@ -188,9 +220,9 @@ const Popup = () => {
     const diff = now.getTime() - date.getTime();
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
 
-    if (days === 0) return 'Today';
-    if (days === 1) return 'Yesterday';
-    if (days < 7) return `${days} days ago`;
+    if (days === 0) return t('dateToday');
+    if (days === 1) return t('dateYesterday');
+    if (days < 7) return t('dateDaysAgo', String(days));
     return date.toLocaleDateString();
   };
 
@@ -231,24 +263,58 @@ const Popup = () => {
         </>
       )}
 
-      {/* 标签过滤 - 编辑模式时隐藏 */}
+      {/* 已读状态 + 排序 - 编辑模式时隐藏 */}
       {!editingPageId && (
-        <div className="filter-tags">
-          <button
-            className={cn('filter-tag', selectedFilter === 'all' && 'active')}
-            onClick={() => setSelectedFilter('all')}
+        <div className="status-bar">
+          <div className="status-tabs">
+            {(
+              [
+                ['all', `${t('allPages')} (${readLaterState.pages.length})`],
+                ['unread', `${t('unread')} (${unreadCount})`],
+                ['read', `${t('read')} (${readLaterState.pages.length - unreadCount})`],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                className={cn('status-tab', statusFilter === value && 'active')}
+                onClick={() => setStatusFilter(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <select
+            className="sort-select"
+            value={sortOrder}
+            onChange={e => setSortOrder(e.target.value as 'newest' | 'oldest')}
+            aria-label={t('sortLabel')}
           >
-            {t('allPages')} ({readLaterState.pages.length})
+            <option value="newest">{t('sortNewest')}</option>
+            <option value="oldest">{t('sortOldest')}</option>
+          </select>
+        </div>
+      )}
+
+      {/* 标签过滤 - 编辑模式时隐藏；默认只显示一行，可展开 */}
+      {!editingPageId && allTags.all.length > 0 && (
+        <div className="filter-tags-wrap">
+          <div className={cn('filter-tags', tagsExpanded && 'expanded')}>
+            {selectedFilter !== 'all' && (
+              <button className="filter-tag active" onClick={() => setSelectedFilter('all')}>
+                ✕ {selectedFilter}
+              </button>
+            )}
+            {allTags.all
+              .filter(tag => tag !== selectedFilter)
+              .map(tag => (
+                <button key={tag} className="filter-tag" onClick={() => setSelectedFilter(tag)}>
+                  {tag} ({readLaterState.pages.filter(p => p.autoTags.includes(tag) || p.tags.includes(tag)).length})
+                </button>
+              ))}
+          </div>
+          <button className="tags-toggle" onClick={() => setTagsExpanded(v => !v)}>
+            {tagsExpanded ? t('showLessTags') : t('showMoreTags')}
           </button>
-          {allTags.all.map(tag => (
-            <button
-              key={tag}
-              className={cn('filter-tag', selectedFilter === tag && 'active')}
-              onClick={() => setSelectedFilter(tag)}
-            >
-              {tag} ({readLaterState.pages.filter(p => p.autoTags.includes(tag) || p.tags.includes(tag)).length})
-            </button>
-          ))}
         </div>
       )}
 
@@ -272,11 +338,18 @@ const Popup = () => {
                   <div className="page-info">
                     {page.favicon && <img src={page.favicon} className="page-favicon" alt="" />}
                     <div className="page-details">
-                      <div className="page-title">{page.title}</div>
+                      <input
+                        type="text"
+                        value={editingTitle}
+                        onChange={e => setEditingTitle(e.target.value)}
+                        placeholder={t('pageTitle')}
+                        aria-label={t('pageTitle')}
+                        className="title-input"
+                      />
                       <div className="page-url">{page.url}</div>
                       <div className="page-meta">
                         <span className="page-date">{formatDate(page.savedAt)}</span>
-                        {page.visitedAt && <span className="visited-badge">👁️ Visited</span>}
+                        {page.visitedAt && <span className="visited-badge">👁️ {t('visited')}</span>}
                       </div>
                     </div>
                   </div>
@@ -284,7 +357,7 @@ const Popup = () => {
                   {/* 自动标签（只读显示） */}
                   {page.autoTags.length > 0 && (
                     <div className="auto-tags-display">
-                      <label className="edit-label">Auto Tags:</label>
+                      <label className="edit-label">{t('autoTags')}:</label>
                       <div className="tags-list">
                         {page.autoTags.map(tag => (
                           <span key={tag} className="tag auto-tag">{tag}</span>
@@ -309,7 +382,7 @@ const Popup = () => {
                         type="text"
                         value={newTag}
                         onChange={(e) => setNewTag(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleAddTag()}
+                        onKeyDown={e => e.key === 'Enter' && handleAddTag()}
                         placeholder={t('addTag')}
                         className="tag-input"
                       />
@@ -341,7 +414,10 @@ const Popup = () => {
                   <div className="page-info" onClick={() => handleOpenPage(page.url, page.id)}>
                     {page.favicon && <img src={page.favicon} className="page-favicon" alt="" />}
                     <div className="page-details">
-                      <div className="page-title">{page.title}</div>
+                      <div className={cn('page-title', !page.visitedAt && 'unread')}>
+                        {!page.visitedAt && <span className="unread-dot" aria-label={t('unread')} />}
+                        {page.title}
+                      </div>
                     </div>
                   </div>
 
@@ -358,6 +434,9 @@ const Popup = () => {
                       </>
                     ) : (
                       <>
+                        <button onClick={() => handleToggleRead(page)} className="action-btn">
+                          {page.visitedAt ? t('markUnread') : t('markRead')}
+                        </button>
                         <button onClick={() => handleStartEdit(page)} className="action-btn">{t('edit')}</button>
                         <button onClick={() => handleDeletePage(page.id)} className="action-btn delete">
                           {t('delete')}
