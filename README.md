@@ -136,3 +136,7 @@ Cloudflare Pages 上传仅包含 web-dist 的静态文件，不上传阅读记�
 [密码登录](https://supabase.com/docs/guides/auth/passwords)、
 [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security)、
 [公开密钥](https://supabase.com/docs/guides/getting-started/api-keys)。
+
+## iPhone 应用（微信里一键保存）
+
+在 `ios/` 目录，原生应用加快捷指令加控制中心按钮，可在微信里不离开当前页面保存链接。安装、设置和待验证事项见 [ios/README.md](ios/README.md)。
