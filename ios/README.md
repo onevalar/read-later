@@ -45,7 +45,7 @@ xcodebuild -project ReadLater.xcodeproj -scheme ReadLater -destination 'platform
 
 ## 已知限制
 
-- 控制中心放快捷指令需要 iOS 18；更低版本可以用“轻点背面”或操作按钮运行同一个快捷指令。
+- 应用使用 iOS 26 的 Liquid Glass 原生控件，最低需要 iOS 26；控制中心放快捷指令需要 iOS 18 或更高。
 - 应用只有一个主页面：阅读库（待读 / 已读、搜索、标已读、删除、文章阅读页）；登录和控制中心设置都在右上角“设置”里。
 - 本机保留一份完整副本，离线也能看和标已读，联网后自动同步；还没做阅读进度记录。
 - 暂未做分享菜单扩展和 Safari 插件。

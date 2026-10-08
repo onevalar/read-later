@@ -23,19 +23,15 @@ struct ReaderScreen: View {
                     }
                     .padding(.horizontal, 20).padding(.bottom, 40)
                 }
-                .safeAreaInset(edge: .bottom) {
-                    HStack {
-                        Text(item.isRead ? "已读" : "未读").font(.footnote).foregroundStyle(.secondary)
-                        Spacer()
-                        Button { library.setRead(item, read: !item.isRead) } label: {
-                            Label(item.isRead ? "标为未读" : "标为已读", systemImage: item.isRead ? "circle" : "checkmark")
-                        }.buttonStyle(.bordered)
-                    }
-                    .padding(.horizontal, 20).padding(.vertical, 10).background(.bar).overlay(alignment: .top) { Divider() }
-                }
                 .toolbar {
                     ToolbarItem(placement: .topBarTrailing) {
                         Button { openOriginal(item.url) } label: { Image(systemName: "safari") }.accessibilityLabel("打开原文")
+                    }
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        Spacer()
+                        Button { library.setRead(item, read: !item.isRead) } label: {
+                            Label(item.isRead ? "标为未读" : "标为已读", systemImage: item.isRead ? "circle" : "checkmark")
+                        }
                     }
                 }
             } else {
@@ -43,6 +39,5 @@ struct ReaderScreen: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.visible, for: .navigationBar)
     }
 }

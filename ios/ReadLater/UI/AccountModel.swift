@@ -14,11 +14,20 @@ final class AccountModel: ObservableObject {
     init(store: SessionStoring = KeychainSessionStore(), api: SupabaseAPI = SupabaseAPI()) {
         self.store = store
         self.api = api
-        session = store.load()
+        session = loadSession()
+    }
+
+    private func loadSession() -> Session? {
+        #if PREVIEW_SIGNED_IN
+        // 仅用于截图预览（编译参数 PREVIEW_SIGNED_IN），正式构建不会包含。
+        return Session(accessToken: "preview", refreshToken: "preview", expiresAt: .distantFuture, userId: "preview", email: "preview@example.com")
+        #else
+        return store.load()
+        #endif
     }
 
     /// 后台任务（快捷指令、同步）可能已经让登录失效或刷新，回到前台时同步一下。
-    func reload() { session = store.load() }
+    func reload() { session = loadSession() }
 
     func signIn() async -> Bool {
         guard !email.isEmpty, !password.isEmpty else { return false }

@@ -22,31 +22,56 @@ struct LibraryScreen: View {
         query.isEmpty || [item.title, item.url, item.notes ?? ""].contains { $0.localizedCaseInsensitiveContains(query) }
     }
 
+    /// 只有需要你处理时（同步出错、有改动没上传）才会在左上角出现云图标。
+    private var needsAttention: Bool {
+        if account.session == nil { return false }
+        switch library.syncState {
+        case .failed, .needsSignIn, .pending: return true
+        default: return false
+        }
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
-            VStack(spacing: 0) {
-                topBar
-                List {
-                    header
-                    if account.session == nil { signInPrompt } else if visible.isEmpty { emptyState }
-                    ForEach(visible) { item in
-                        row(item)
-                            .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) { library.delete(item) } label: { Label("删除", systemImage: "trash") }
-                            }
-                            .swipeActions(edge: .leading) {
-                                Button { library.setRead(item, read: !item.isRead) } label: {
-                                    Label(item.isRead ? "未读" : "已读", systemImage: item.isRead ? "circle" : "checkmark")
-                                }.tint(.accentColor)
-                            }
+            List {
+                if account.session == nil { signInPrompt } else if visible.isEmpty { emptyState }
+                ForEach(visible) { item in
+                    row(item)
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) { library.delete(item) } label: { Label("删除", systemImage: "trash") }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button { library.setRead(item, read: !item.isRead) } label: {
+                                Label(item.isRead ? "未读" : "已读", systemImage: item.isRead ? "circle" : "checkmark")
+                            }.tint(.accentColor)
+                        }
+                }
+            }
+            .listStyle(.plain)
+            .refreshable { await refresh() }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if needsAttention {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { showSettings = true } label: { Image(systemName: "exclamationmark.icloud") }
+                            .accessibilityLabel("同步需要处理")
                     }
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .refreshable { await refresh() }
+                ToolbarItem(placement: .principal) {
+                    Picker("阅读状态", selection: $showUnread) {
+                        Text(library.unreadCount > 0 ? "待读 \(library.unreadCount)" : "待读").tag(true)
+                        Text("已读").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 200)
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showAdd = true } label: { Image(systemName: "plus") }.accessibilityLabel("添加链接")
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("设置")
+                }
             }
-            .background(Color(.systemBackground))
-            .toolbar(.hidden, for: .navigationBar)
+            .searchable(text: $query, prompt: "搜索阅读库")
+            .searchToolbarBehavior(.minimize)
             .navigationDestination(for: LibraryItem.self) { item in
                 ReaderScreen(itemID: item.id, openOriginal: { safariURL = URL(string: $0) })
             }
@@ -65,84 +90,6 @@ struct LibraryScreen: View {
         await library.sync()
     }
 
-    // MARK: 顶栏：品牌 + 添加 + 设置（不用系统导航栏，避免被系统按钮框挤压）
-
-    private var topBar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "bookmark").font(.system(size: 19, weight: .regular))
-            Text("Read Later").font(.system(size: 17, weight: .semibold))
-            Spacer()
-            iconButton("plus", label: "添加链接") { showAdd = true }
-            iconButton("slider.horizontal.3", label: "设置") { showSettings = true }
-        }
-        .padding(.leading, 20).padding(.trailing, 8)
-        .frame(height: 48)
-    }
-
-    private func iconButton(_ name: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: name).font(.system(size: 18)).foregroundStyle(.secondary)
-                .frame(width: 44, height: 44).contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
-    }
-
-    // MARK: 标题、同步状态、搜索、待读/已读
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("留给稍后的好内容").font(.system(size: 28, weight: .semibold)).tracking(-0.5)
-                Button { syncTapped() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "icloud").font(.system(size: 13))
-                        Text(syncText).font(.system(size: 13))
-                    }.foregroundStyle(.secondary)
-                }.buttonStyle(.plain)
-            }
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("搜索阅读库", text: $query).textInputAutocapitalization(.never).autocorrectionDisabled()
-                if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary) }.buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 14).frame(height: 44)
-            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color(.secondarySystemBackground)))
-            HStack(spacing: 8) {
-                segment("待读 \(library.unreadCount)", selected: showUnread) { showUnread = true }
-                segment("已读", selected: !showUnread) { showUnread = false }
-            }
-        }
-        .padding(.horizontal, 20).padding(.top, 8).padding(.bottom, 6)
-        .listRowInsets(EdgeInsets())
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
-    }
-
-    private func syncTapped() {
-        if account.session == nil { showSettings = true; return }
-        switch library.syncState {
-        case .failed, .needsSignIn: showSettings = true
-        default: Task { await library.sync() }
-        }
-    }
-
-    private var syncText: String {
-        if account.session == nil { return "登录后同步" }
-        let label = library.syncState.label
-        return label.isEmpty ? "已同步" : label
-    }
-
-    private func segment(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title).font(.system(size: 15, weight: .medium)).frame(maxWidth: .infinity).frame(height: 40)
-                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(selected ? Color.accentColor.opacity(0.13) : Color.clear))
-                .foregroundStyle(selected ? Color.accentColor : Color.primary)
-        }.buttonStyle(.plain)
-    }
-
     // MARK: 空状态
 
     private var signInPrompt: some View {
@@ -151,7 +98,7 @@ struct LibraryScreen: View {
             Button("登录阅读库") { showSettings = true }.buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 48)
-        .listRowInsets(EdgeInsets()).listRowSeparator(.hidden).listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     private var emptyState: some View {
@@ -163,7 +110,7 @@ struct LibraryScreen: View {
             }
         }
         .padding(.horizontal, 40).frame(maxWidth: .infinity).padding(.vertical, 48)
-        .listRowInsets(EdgeInsets()).listRowSeparator(.hidden).listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     // MARK: 一行文章：方块 + 标题 + 来源 · 日期 · 时长 + 更多
@@ -177,9 +124,9 @@ struct LibraryScreen: View {
                         .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(Color(.secondarySystemBackground)))
                         .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).stroke(Color(.separator).opacity(0.55), lineWidth: 1))
                         .padding(.top, 1)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(item.title).font(.system(size: 16, weight: .medium)).lineSpacing(3)
-                            .lineLimit(3).multilineTextAlignment(.leading)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.title).font(.system(size: 16, weight: .medium)).lineSpacing(2)
+                            .lineLimit(2).multilineTextAlignment(.leading)
                         Text(meta(item)).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 0)
@@ -199,13 +146,7 @@ struct LibraryScreen: View {
             }
             .tint(.secondary)
         }
-        .padding(.leading, 20).padding(.trailing, 8).padding(.vertical, 16)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Color(.separator).opacity(0.4)).frame(height: 1 / UIScreen.main.scale).padding(.horizontal, 20)
-        }
-        .listRowInsets(EdgeInsets())
-        .listRowSeparator(.hidden)
-        .listRowBackground(Color.clear)
+        .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 8))
     }
 
     private func meta(_ item: LibraryItem) -> String {
