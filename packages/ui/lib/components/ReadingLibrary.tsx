@@ -55,6 +55,19 @@ const paths = {
     </>
   ),
   arrow: <path d="m9 5 7 7-7 7" />,
+  chevronDown: <path d="m6 9 6 6 6-6" />,
+  phone: (
+    <>
+      <rect x="6" y="2" width="12" height="20" rx="3" />
+      <path d="M10 18h4" />
+    </>
+  ),
+  monitor: (
+    <>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" />
+    </>
+  ),
   back: <path d="m15 5-7 7 7 7" />,
   check: <path d="m5 12 4 4L19 6" />,
   external: (
@@ -148,8 +161,10 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
   const displaySync = readingSyncStatus(sync, config.enabled, state.operations?.length ?? 0, navigator.onLine);
   const prefs = useStorage(prefsStorage);
   const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(!popup);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState<'unread' | 'read'>('unread');
+  const [view, setView] = useState<'all' | 'continue'>('all');
+  const [newestFirst, setNewestFirst] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(() => location.hash === '#settings');
   const [addOpen, setAddOpen] = useState(false);
   const [url, setUrl] = useState('');
@@ -184,15 +199,27 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
     .filter(
       p =>
         (filter === 'unread' ? !p.visitedAt : !!p.visitedAt) &&
+        (view === 'all' || (filter === 'unread' && (p.progress ?? 0) > 0)) &&
         [p.title, p.url, p.notes ?? '', ...p.tags, ...p.autoTags].some(s =>
           s.toLowerCase().includes(query.toLowerCase()),
         ),
     )
-    .sort((a, b) => b.savedAt - a.savedAt);
+    .sort((a, b) => (newestFirst ? b.savedAt - a.savedAt : a.savedAt - b.savedAt));
   const resume = state.pages.find(
     p => !p.visitedAt && (p.progress ?? 0) > 0 && (p.progress ?? 0) < 0.98 && p.articleText,
   );
   const extension = !!globalThis.chrome?.runtime?.id;
+  useEffect(() => {
+    if (popup) return;
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        setSearchOpen(open => !open);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [popup]);
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
     const apply = () => {
@@ -350,7 +377,13 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
       link.click();
       setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     });
-  const date = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const date = (at: number) => {
+    const startOfDay = (time: number) => new Date(new Date(time).setHours(0, 0, 0, 0)).getTime();
+    const days = Math.round((startOfDay(Date.now()) - startOfDay(at)) / 864e5);
+    if (days <= 0) return text('今天', 'Today');
+    if (days === 1) return text('昨天', 'Yesterday');
+    return new Date(at).toLocaleDateString(zh ? 'zh-CN' : undefined, { month: zh ? 'long' : 'short', day: 'numeric' });
+  };
   if (reader)
     return (
       <ArticleReader
@@ -367,48 +400,98 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
         error={notice}
       />
     );
+  const rows = filtered.length ? (
+    filtered.map(page => (
+      <div className="reading-row" key={page.id}>
+        <Button variant="ghost" className="reading-row-open" onPress={() => openPage(page)}>
+          <span className="site-mark">{host(page.url).charAt(0).toUpperCase()}</span>
+          <span className="reading-row-text">
+            <strong>{page.title}</strong>
+            <small>
+              {host(page.url)} · {date(page.savedAt)}
+              {page.articleText &&
+                ' · ' + Math.max(1, Math.ceil(page.articleText.length / 900)) + text(' 分钟', ' min')}
+              {(page.progress ?? 0) > 0 && !page.visitedAt && ' · ' + Math.round((page.progress ?? 0) * 100) + '%'}
+            </small>
+          </span>
+        </Button>
+        <IconButton
+          name="more"
+          label={text('更多操作：', 'More actions: ') + page.title}
+          onPress={() => startEdit(page)}
+        />
+      </div>
+    ))
+  ) : (
+    <div className="reading-empty">
+      <Icon name="bookmark" size={28} />
+      <h2>
+        {query
+          ? text('没有找到这篇内容', 'Nothing found')
+          : filter === 'read'
+            ? text('读过的内容会留在这里', 'Your finished reading lives here')
+            : text('把值得读的，留给有空的你。', 'Save something worth slowing down for.')}
+      </h2>
+      <p>
+        {query
+          ? text('换一个词试试。', 'Try another search.')
+          : text('保存一个页面，阅读库就从这里开始。', 'Save a page to begin your reading library.')}
+      </p>
+    </div>
+  );
+  const heading = filter === 'unread' ? text('待读', 'To read') : text('已读', 'Read');
   return (
     <div className={popup ? 'reading-app reading-popup' : 'reading-app reading-full'}>
       {!popup && (
         <aside className="reading-sidebar">
           <div className="reading-brand">
-            <Icon name="bookmark" />
+            <Icon name="bookmark" size={22} />
             <strong>Read Later</strong>
           </div>
-          <Button variant={filter === 'unread' ? 'secondary' : 'ghost'} onPress={() => setFilter('unread')}>
-            <Icon name="bookmark" />
-            {text('待读', 'To read')}
+          <Button
+            variant="ghost"
+            className={filter === 'unread' ? 'nav-active' : ''}
+            onPress={() => setFilter('unread')}>
+            <Icon name="bookmark" size={17} />
+            <em>{text('待读', 'To read')}</em>
             <span>{unread}</span>
           </Button>
-          <Button variant={filter === 'read' ? 'secondary' : 'ghost'} onPress={() => setFilter('read')}>
-            <Icon name="check" />
-            {text('已读', 'Read')}
+          <Button variant="ghost" className={filter === 'read' ? 'nav-active' : ''} onPress={() => setFilter('read')}>
+            <Icon name="check" size={17} />
+            <em>{text('已读', 'Read')}</em>
             <span>{state.pages.length - unread}</span>
+          </Button>
+          <Button variant="ghost" className={searchOpen ? 'nav-active' : ''} onPress={() => setSearchOpen(!searchOpen)}>
+            <Icon name="search" size={17} />
+            <em>{text('搜索', 'Search')}</em>
+            <span>⌘ K</span>
           </Button>
           <div className="sidebar-bottom">
             <Button variant="ghost" onPress={() => setSettingsOpen(true)}>
-              <Icon name="cloud" />
-              {syncLabel(displaySync)}
+              <Icon name="cloud" size={17} />
+              <em>{syncLabel(displaySync)}</em>
             </Button>
             <Button variant="ghost" onPress={() => setSettingsOpen(true)}>
-              <Icon name="settings" />
-              {text('设置', 'Settings')}
+              <Icon name="settings" size={17} />
+              <em>{text('设置', 'Settings')}</em>
             </Button>
           </div>
         </aside>
       )}
       <main className="reading-main">
-        <header className="reading-header">
+        <header className={popup ? 'reading-header' : 'reading-header reading-mobile-head'}>
           <div className="reading-brand">
-            <Icon name={popup ? 'bookmark' : 'book'} />
-            <strong>{popup ? 'Read Later' : text('留一点时间给阅读。', 'Make a little time to read.')}</strong>
+            <Icon name="bookmark" />
+            <strong>Read Later</strong>
           </div>
           <div className="reading-actions">
-            <IconButton
-              name="search"
-              label={text('搜索阅读库', 'Search library')}
-              onPress={() => setSearchOpen(!searchOpen)}
-            />
+            {popup && (
+              <IconButton
+                name="search"
+                label={text('搜索阅读库', 'Search library')}
+                onPress={() => setSearchOpen(!searchOpen)}
+              />
+            )}
             <IconButton
               name="settings"
               label={text('设置', 'Settings')}
@@ -435,114 +518,129 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
               </Button>
             )
           ) : (
-            <div className="library-intro">
-              <p>
-                {text(
-                  '好内容不必现在读，想读时它们都在这里。',
-                  'Keep the good things here, until you are ready to read.',
-                )}
-              </p>
-              <Button variant="outline" onPress={() => setAddOpen(true)}>
-                <Icon name="plus" size={16} />
-                {text('添加链接', 'Add a link')}
-              </Button>
-            </div>
+            <>
+              <div className="library-title">
+                <div>
+                  <h1 className="title-desktop">{heading}</h1>
+                  <h1 className="title-mobile">{text('留给稍后的好内容', 'Good things for later')}</h1>
+                  <p className="title-desktop">
+                    {text(
+                      filtered.length + ' 篇好内容，留给有空的你。',
+                      filtered.length + ' good reads, saved for when you have time.',
+                    )}
+                  </p>
+                  <p className="title-mobile">
+                    <Icon name="cloud" size={14} />
+                    {syncLabel(displaySync)}
+                  </p>
+                </div>
+                <Button className="add-link" onPress={() => setAddOpen(true)}>
+                  <Icon name="plus" size={16} />
+                  {text('添加链接', 'Add a link')}
+                </Button>
+              </div>
+              <div className="library-chips">
+                <div role="group" aria-label={text('视图', 'View')}>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={view === 'all' ? 'chip-active' : ''}
+                    onPress={() => setView('all')}>
+                    {text('全部', 'All')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={view === 'continue' ? 'chip-active' : ''}
+                    onPress={() => {
+                      setView('continue');
+                      setFilter('unread');
+                    }}>
+                    {text('继续阅读', 'Continue reading')}
+                  </Button>
+                </div>
+                <Button variant="ghost" size="sm" className="sort-button" onPress={() => setNewestFirst(!newestFirst)}>
+                  {newestFirst ? text('最近保存', 'Newest first') : text('最早保存', 'Oldest first')}
+                  <Icon name="chevronDown" size={14} />
+                </Button>
+              </div>
+            </>
           )}
-          {searchOpen && (
+          {(searchOpen || !popup) && (
             <Input
-              className="library-search"
+              className={searchOpen || popup ? 'library-search open' : 'library-search'}
               aria-label={text('搜索标题、网址或笔记', 'Search titles, links or notes')}
-              placeholder={text('搜索阅读库…', 'Search your library…')}
+              placeholder={text('搜索阅读库', 'Search your library')}
               value={query}
               onChange={e => setQuery(e.target.value)}
               fullWidth
             />
           )}
-          {!popup && resume && !query && filter === 'unread' && (
-            <Button variant="ghost" className="resume-reading" onPress={() => openPage(resume)}>
-              <Icon name="book" size={22} />
-              <span>
-                <small>
-                  {text('继续阅读', 'Continue reading')} · {Math.round((resume.progress ?? 0) * 100)}%
-                </small>
-                <strong>{resume.title}</strong>
-                <span className="reading-progress">
-                  <span style={{ width: (resume.progress ?? 0) * 100 + '%' }} />
+          {!popup && resume && !query && filter === 'unread' && view === 'all' && (
+            <div className="resume-reading">
+              <div className="resume-meta">
+                <span>
+                  <Icon name="phone" size={16} />
+                  {text('上次读到了 ', 'You left off at ') + Math.round((resume.progress ?? 0) * 100) + '%'}
                 </span>
-              </span>
-              <Icon name="arrow" size={16} />
-            </Button>
+              </div>
+              <div className="resume-body">
+                <span>
+                  <strong>{resume.title}</strong>
+                  <small>
+                    {host(resume.url)} · {text('还需约 ', 'About ')}
+                    {Math.max(1, Math.ceil(((resume.articleText?.length ?? 0) * (1 - (resume.progress ?? 0))) / 900))}
+                    {text(' 分钟', ' min left')}
+                  </small>
+                </span>
+                <Button variant="outline" onPress={() => openPage(resume)}>
+                  <Icon name="arrow" size={16} />
+                  {text('继续阅读', 'Continue')}
+                </Button>
+              </div>
+            </div>
           )}
-          <div className="library-tabs">
-            <div role="group" aria-label={text('阅读状态', 'Reading status')}>
+          {popup ? (
+            <div className="library-tabs">
+              <div role="group" aria-label={text('阅读状态', 'Reading status')}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className={filter === 'unread' ? 'tab-active' : ''}
+                  onPress={() => setFilter('unread')}>
+                  {text('待读', 'To read')}
+                  <span>{unread}</span>
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className={filter === 'read' ? 'tab-active' : ''}
+                  onPress={() => setFilter('read')}>
+                  {text('已读', 'Read')}
+                </Button>
+              </div>
+              <Button variant="ghost" size="sm" className="sync-indicator" onPress={() => openLibrary('#settings')}>
+                <Icon name="cloud" size={14} />
+                {syncLabel(displaySync)}
+              </Button>
+            </div>
+          ) : (
+            <div className="mobile-seg" role="group" aria-label={text('阅读状态', 'Reading status')}>
               <Button
-                size="sm"
                 variant="ghost"
-                className={filter === 'unread' ? 'tab-active' : ''}
+                className={filter === 'unread' ? 'seg-active' : ''}
                 onPress={() => setFilter('unread')}>
-                {text('待读', 'To read')}
-                <span>{unread}</span>
+                {text('待读', 'To read')} {unread}
               </Button>
               <Button
-                size="sm"
                 variant="ghost"
-                className={filter === 'read' ? 'tab-active' : ''}
+                className={filter === 'read' ? 'seg-active' : ''}
                 onPress={() => setFilter('read')}>
                 {text('已读', 'Read')}
               </Button>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="sync-indicator"
-              onPress={() => (popup ? openLibrary('#settings') : setSettingsOpen(true))}>
-              <Icon name="cloud" size={14} />
-              {syncLabel(displaySync)}
-            </Button>
-          </div>
-          <div className="reading-list">
-            {filtered.length ? (
-              filtered.map(page => (
-                <div className="reading-row" key={page.id}>
-                  <Button variant="ghost" className="reading-row-open" onPress={() => openPage(page)}>
-                    <span className="site-mark">{host(page.url).slice(0, 2).toUpperCase()}</span>
-                    <span className="reading-row-text">
-                      <strong>{page.title}</strong>
-                      <small>
-                        {host(page.url)} · {date(page.savedAt)}
-                        {page.articleText &&
-                          ' · ' + Math.max(1, Math.ceil(page.articleText.length / 900)) + text(' 分钟', ' min')}
-                        {(page.progress ?? 0) > 0 &&
-                          !page.visitedAt &&
-                          ' · ' + Math.round((page.progress ?? 0) * 100) + '%'}
-                      </small>
-                    </span>
-                  </Button>
-                  <IconButton
-                    name="more"
-                    label={text('更多操作：', 'More actions: ') + page.title}
-                    onPress={() => startEdit(page)}
-                  />
-                </div>
-              ))
-            ) : (
-              <div className="reading-empty">
-                <Icon name="bookmark" size={28} />
-                <h2>
-                  {query
-                    ? text('没有找到这篇内容', 'Nothing found')
-                    : filter === 'read'
-                      ? text('读过的内容会留在这里', 'Your finished reading lives here')
-                      : text('把值得读的，留给有空的你。', 'Save something worth slowing down for.')}
-                </h2>
-                <p>
-                  {query
-                    ? text('换一个词试试。', 'Try another search.')
-                    : text('保存一个页面，阅读库就从这里开始。', 'Save a page to begin your reading library.')}
-                </p>
-              </div>
-            )}
-          </div>
+          )}
+          <div className="reading-list">{rows}</div>
         </div>
         {undoReceipt ? (
           <footer className="reading-footer reading-undo">
@@ -551,16 +649,26 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
               {text('撤销', 'Undo')}
             </Button>
           </footer>
+        ) : popup ? (
+          <footer className="reading-footer">
+            <span>
+              {config.enabled && displaySync.phase === 'synced'
+                ? text('在手机上接着读', 'Continue on your phone')
+                : text('快捷键 ⌘ ⇧ S 快速保存', 'Press ⌘ ⇧ S to save quickly')}
+            </span>
+            <Button variant="ghost" size="sm" onPress={() => openLibrary()}>
+              {text('打开阅读库', 'Open library')}
+              <Icon name="arrow" size={13} />
+            </Button>
+          </footer>
         ) : (
-          popup && (
-            <footer className="reading-footer">
-              <Button variant="ghost" size="sm" onPress={() => openLibrary()}>
-                {text('打开完整阅读库', 'Open library')}
-                <Icon name="external" size={14} />
-              </Button>
-              <span>⌘ ⇧ S</span>
-            </footer>
-          )
+          <footer className="reading-footer mobile-bar">
+            <span>
+              <Icon name="monitor" size={15} />
+              {text('包含电脑保存的内容', 'Includes pages saved on your computer')}
+            </span>
+            <IconButton name="plus" label={text('添加链接', 'Add a link')} onPress={() => setAddOpen(true)} />
+          </footer>
         )}
       </main>
       <Dialog
@@ -808,17 +916,21 @@ const ArticleReader = function ArticleReader({
     if (await persist(finished)) close();
     else setClosing(false);
   };
+  const minutes = Math.max(1, Math.ceil((page.articleText?.length ?? 0) / 900));
   return (
     <div className="article-reader">
       <header>
         <Button variant="ghost" size="sm" isDisabled={closing} onPress={() => void finishNavigation()}>
-          <Icon name="back" />
-          {text('阅读库', 'Library')}
+          <Icon name="back" size={18} />
+          {text('待读', 'To read')}
         </Button>
-        <span>{Math.round(progress * 100)}%</span>
-        <Button variant="ghost" size="sm" onPress={() => window.open(page.url, '_blank', 'noopener,noreferrer')}>
-          <Icon name="external" size={15} />
-          {text('原文', 'Original')}
+        <Button
+          variant="ghost"
+          size="sm"
+          isIconOnly
+          aria-label={text('打开原文', 'Open original')}
+          onPress={() => window.open(page.url, '_blank', 'noopener,noreferrer')}>
+          <Icon name="external" size={16} />
         </Button>
       </header>
       {error && (
@@ -826,9 +938,6 @@ const ArticleReader = function ArticleReader({
           {error}
         </p>
       )}
-      <div className="reader-progress">
-        <span style={{ width: progress * 100 + '%' }} />
-      </div>
       <div
         ref={scroll}
         className="reader-scroll"
@@ -842,18 +951,25 @@ const ArticleReader = function ArticleReader({
           timer.current = setTimeout(() => void persist(), 500);
         }}>
         <article>
-          <span className="reading-muted">{host(page.url)}</span>
+          <span className="reader-site">{host(page.url)}</span>
           <h1>{page.title}</h1>
+          <p className="reader-meta">{minutes + text(' 分钟阅读', ' min read')}</p>
           {page.articleText
             ?.split(/\n+/)
             .filter(Boolean)
             .map((paragraph, index) => <p key={index}>{paragraph}</p>)}
-          <Button variant="outline" isDisabled={closing} onPress={() => void finishNavigation(true)}>
-            <Icon name="check" />
-            {text('读完了', 'Finished reading')}
-          </Button>
         </article>
       </div>
+      <div className="reader-progress">
+        <span style={{ width: progress * 100 + '%' }} />
+      </div>
+      <footer className="reader-footer">
+        <span>{Math.round(progress * 100) + '% · ' + text('进度已保存', 'Progress saved')}</span>
+        <Button variant="secondary" isDisabled={closing} onPress={() => void finishNavigation(true)}>
+          <Icon name="check" size={16} />
+          {text('标为已读', 'Mark as read')}
+        </Button>
+      </footer>
     </div>
   );
 };
