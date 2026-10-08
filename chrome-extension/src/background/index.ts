@@ -1,5 +1,6 @@
 import 'webextension-polyfill';
-import { readLaterStorage, type SaveResult } from '@extension/storage';
+import { readLaterStorage, syncReadingLibrary, removeLegacySyncCredentials, isSavableUrl } from '@extension/storage';
+import type { SaveOutcome } from '@extension/storage';
 
 // 图标主题管理
 interface IconTheme {
@@ -9,7 +10,7 @@ interface IconTheme {
 const ICON_THEME_KEY = 'iconTheme';
 
 // 设置图标
-async function setIcon(theme: 'light' | 'dark') {
+const setIcon = async function setIcon(theme: 'light' | 'dark') {
   const iconPaths = {
     light: {
       '16': 'icons/icon-16-light.png',
@@ -18,44 +19,44 @@ async function setIcon(theme: 'light' | 'dark') {
     dark: {
       '16': 'icons/icon-16-dark.png',
       '32': 'icons/icon-32-dark.png',
-    }
+    },
   };
 
   try {
     await chrome.action.setIcon({ path: iconPaths[theme] });
-  } catch (error) {
+  } catch {
     // 回退到默认图标
     await chrome.action.setIcon({ path: 'icon-34.png' });
   }
-}
+};
 
 // 系统主题：service worker 拿不到 matchMedia，由 popup / 设置页打开时上报并缓存在这里
 const SYSTEM_THEME_KEY = 'systemTheme';
 
-async function getSystemTheme(): Promise<'light' | 'dark'> {
+const getSystemTheme = async function getSystemTheme(): Promise<'light' | 'dark'> {
   const stored = await chrome.storage.local.get(SYSTEM_THEME_KEY);
   return stored[SYSTEM_THEME_KEY] === 'dark' ? 'dark' : 'light';
-}
+};
 
 // 初始化图标主题
-async function initializeIconTheme() {
+const initializeIconTheme = async function initializeIconTheme() {
   try {
     const stored = await chrome.storage.local.get(ICON_THEME_KEY);
     const iconTheme: IconTheme = stored[ICON_THEME_KEY] || { mode: 'auto' };
-    
+
     let targetTheme: 'light' | 'dark';
-    
+
     if (iconTheme.mode === 'auto') {
       targetTheme = await getSystemTheme();
     } else {
       targetTheme = iconTheme.mode;
     }
-    
+
     await setIcon(targetTheme);
   } catch (error) {
     console.log('Failed to initialize icon theme:', error);
   }
-}
+};
 
 // 提供设置图标主题的方法
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -67,7 +68,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
     return true;
   }
-  
+
   if (message.type === 'SYSTEM_THEME') {
     const theme = message.theme === 'dark' ? 'dark' : 'light';
     chrome.storage.local.set({ [SYSTEM_THEME_KEY]: theme }).then(() => {
@@ -84,7 +85,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     });
     return true;
   }
-  
+
   return false;
 });
 
@@ -103,17 +104,17 @@ chrome.runtime.onInstalled.addListener(() => {
 // ============ Read Later 功能 ============
 
 // 获取 favicon URL
-function getFaviconUrl(url: string): string {
+const getFaviconUrl = function getFaviconUrl(url: string): string {
   try {
     const urlObj = new URL(url);
     return `${urlObj.protocol}//${urlObj.hostname}/favicon.ico`;
   } catch {
     return '';
   }
-}
+};
 
 // 在图标上短暂显示保存结果，让用户知道有没有成功
-async function showBadge(text: string, color: string) {
+const showBadge = async function showBadge(text: string, color: string) {
   try {
     await chrome.action.setBadgeBackgroundColor({ color });
     await chrome.action.setBadgeText({ text });
@@ -123,29 +124,35 @@ async function showBadge(text: string, color: string) {
   } catch (error) {
     console.error('Failed to set badge:', error);
   }
-}
+};
 
 // 统一的保存入口：保存并把结果反馈到图标上
-async function savePageWithFeedback(page: { url?: string; title?: string; favicon?: string }): Promise<SaveResult> {
+const savePageWithFeedback = async function savePageWithFeedback(page: {
+  url?: string;
+  title?: string;
+  favicon?: string;
+  articleText?: string;
+}): Promise<SaveOutcome> {
   const url = page.url ?? '';
-  const result = await readLaterStorage.savePage({
+  const outcome = await readLaterStorage.savePageWithReceipt({
     url,
     title: page.title || url,
     favicon: page.favicon || getFaviconUrl(url),
+    articleText: page.articleText,
   });
 
-  if (result === 'saved') {
+  if (outcome.result === 'saved') {
     await showBadge('✓', '#16a34a');
-  } else if (result === 'duplicate') {
+  } else if (outcome.result === 'duplicate') {
     await showBadge('=', '#ca8a04');
   } else {
     await showBadge('!', '#dc2626');
   }
-  return result;
-}
+  return outcome;
+};
 
 // 保存当前页面
-async function saveCurrentPage(tab?: chrome.tabs.Tab): Promise<SaveResult> {
+const saveCurrentPage = async function saveCurrentPage(tab?: chrome.tabs.Tab): Promise<SaveOutcome> {
   try {
     // 如果没有传入 tab，获取当前活动标签页
     if (!tab) {
@@ -153,13 +160,29 @@ async function saveCurrentPage(tab?: chrome.tabs.Tab): Promise<SaveResult> {
       tab = activeTab;
     }
 
-    return await savePageWithFeedback({ url: tab?.url, title: tab?.title, favicon: tab?.favIconUrl });
+    let articleText: string | undefined;
+    if (tab?.id && isSavableUrl(tab.url)) {
+      try {
+        const [result] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            const article =
+              document.querySelector<HTMLElement>('article') ?? document.querySelector<HTMLElement>('main');
+            return article?.innerText?.trim().slice(0, 120000);
+          },
+        });
+        if (typeof result?.result === 'string') articleText = result.result;
+      } catch {
+        /* A bookmark remains useful when this page disallows content extraction. */
+      }
+    }
+    return await savePageWithFeedback({ url: tab?.url, title: tab?.title, favicon: tab?.favIconUrl, articleText });
   } catch (error) {
     console.error('Failed to save page:', error);
     await showBadge('!', '#dc2626');
-    return 'unsupported';
+    return { result: 'unsupported' };
   }
-}
+};
 
 // 监听右键菜单点击
 chrome.contextMenus.onClicked.addListener((info, tab) => {
@@ -179,7 +202,7 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 });
 
 // 监听快捷键
-chrome.commands.onCommand.addListener((command) => {
+chrome.commands.onCommand.addListener(command => {
   if (command === 'save-page') {
     saveCurrentPage();
   }
@@ -188,8 +211,8 @@ chrome.commands.onCommand.addListener((command) => {
 // 监听来自 popup 的消息
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'SAVE_CURRENT_PAGE') {
-    saveCurrentPage().then(result => {
-      sendResponse({ success: result === 'saved', result });
+    saveCurrentPage().then(outcome => {
+      sendResponse({ success: outcome.result === 'saved', ...outcome });
     });
     return true;
   }
@@ -198,3 +221,23 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 console.log('Background loaded with Read Later support');
+
+// Remove the retired provider's alarm and credentials on upgrade.
+void chrome.alarms.clear('read-later-icloud-sync');
+void removeLegacySyncCredentials().catch(() => undefined);
+const SYNC_ALARM = 'read-later-supabase-sync';
+void chrome.alarms.create(SYNC_ALARM, { periodInMinutes: 2 });
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === SYNC_ALARM) void syncReadingLibrary();
+});
+chrome.runtime.onStartup.addListener(() => {
+  void syncReadingLibrary();
+});
+let syncTimer: ReturnType<typeof setTimeout>;
+chrome.storage.local.onChanged.addListener(changes => {
+  const libraryChanged = !!changes['read-later-storage-key'];
+  const configChanged = changes['read-later-supabase-config'];
+  if (!libraryChanged && !configChanged) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(() => void syncReadingLibrary(), 700);
+});

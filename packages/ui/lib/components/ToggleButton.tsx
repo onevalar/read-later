@@ -1,11 +1,11 @@
-import { cn } from '@/lib/utils';
+import { cn } from '../utils';
 import { useStorage } from '@extension/shared';
 import { exampleThemeStorage } from '@extension/storage';
 import type { ComponentPropsWithoutRef } from 'react';
 
 type ToggleButtonProps = ComponentPropsWithoutRef<'button'>;
 
-export const ToggleButton = ({ className, children, ...props }: ToggleButtonProps) => {
+const ToggleButton = ({ className, children, ...props }: ToggleButtonProps) => {
   const { isLight } = useStorage(exampleThemeStorage);
 
   return (
@@ -21,3 +21,5 @@ export const ToggleButton = ({ className, children, ...props }: ToggleButtonProp
     </button>
   );
 };
+
+export { ToggleButton };

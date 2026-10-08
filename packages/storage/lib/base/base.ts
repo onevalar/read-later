@@ -5,7 +5,51 @@ import type { BaseStorageType, StorageConfigType, ValueOrUpdateType } from './ty
  * Chrome reference error while running `processTailwindFeatures` in tailwindcss.
  *  To avoid this, we need to check if globalThis.chrome is available and add fallback logic.
  */
-const chrome = globalThis.chrome;
+const chrome = globalThis.chrome?.storage ? globalThis.chrome : undefined;
+let webDatabase: Promise<IDBDatabase> | undefined;
+const webChannel =
+  !chrome && typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined'
+    ? new BroadcastChannel('read-later-storage')
+    : undefined;
+const openWebDatabase = () => {
+  if (!webDatabase)
+    webDatabase = new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('read-later', 1);
+      request.onupgradeneeded = () => request.result.createObjectStore('settings');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => {
+        webDatabase = undefined;
+        reject(request.error);
+      };
+    });
+  return webDatabase;
+};
+const readWebValue = async (key: string): Promise<unknown> => {
+  if (typeof indexedDB !== 'undefined') {
+    const db = await openWebDatabase();
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const request = db.transaction('settings', 'readonly').objectStore('settings').get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    if (value !== undefined) return value;
+  }
+  const raw = globalThis.localStorage?.getItem(key);
+  return raw ? JSON.parse(raw) : undefined;
+};
+const writeWebValue = async (key: string, value: unknown) => {
+  if (typeof indexedDB !== 'undefined') {
+    const db = await openWebDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('settings', 'readwrite');
+      transaction.objectStore('settings').put(value, key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } else if (globalThis.localStorage) localStorage.setItem(key, JSON.stringify(value));
+  webChannel?.postMessage(key);
+};
 
 /**
  * Sets or updates an arbitrary cache with a new value or the result of an update function.
@@ -53,11 +97,7 @@ const checkStoragePermission = (storageEnum: StorageEnum): void => {
 /**
  * Creates a storage area for persisting and exchanging data.
  */
-export const createStorage = <D = string>(
-  key: string,
-  fallback: D,
-  config?: StorageConfigType<D>,
-): BaseStorageType<D> => {
+const createStorage = <D = string>(key: string, fallback: D, config?: StorageConfigType<D>): BaseStorageType<D> => {
   let cache: D | null = null;
   let initialCache = false;
   let listeners: Array<() => void> = [];
@@ -90,7 +130,7 @@ export const createStorage = <D = string>(
   // Register life cycle methods
   const get = async (): Promise<D> => {
     checkStoragePermission(storageEnum);
-    const value = await chrome?.storage[storageEnum].get([key]);
+    const value = chrome?.storage ? await chrome.storage[storageEnum].get([key]) : { [key]: await readWebValue(key) };
 
     if (!value) {
       return fallback;
@@ -103,9 +143,10 @@ export const createStorage = <D = string>(
     if (!initialCache) {
       cache = await get();
     }
-    cache = await updateCache(valueOrUpdate, cache);
-
-    await chrome?.storage[storageEnum].set({ [key]: serialize(cache) });
+    const next = await updateCache(valueOrUpdate, cache);
+    if (chrome?.storage) await chrome.storage[storageEnum].set({ [key]: serialize(next) });
+    else await writeWebValue(key, serialize(next));
+    cache = next;
     _emitChange();
   };
 
@@ -137,15 +178,33 @@ export const createStorage = <D = string>(
     _emitChange();
   };
 
-  get().then(data => {
-    cache = data;
-    initialCache = true;
-    _emitChange();
-  });
+  get()
+    .then(data => {
+      cache = data;
+      initialCache = true;
+      _emitChange();
+    })
+    .catch(() => {
+      // useStorage independently reads get() and sends its rejection to the visible error boundary.
+      // Do not publish a fallback that would hide a broken or unavailable persistence layer.
+    });
 
   // Register listener for live updates for our storage area
   if (liveUpdate) {
     chrome?.storage[storageEnum].onChanged.addListener(_updateFromStorageOnChanged);
+    if (!chrome?.storage && typeof window !== 'undefined')
+      window.addEventListener('storage', event => {
+        if (event.key === key) {
+          cache = event.newValue ? deserialize(JSON.parse(event.newValue)) : fallback;
+          _emitChange();
+        }
+      });
+    webChannel?.addEventListener('message', async event => {
+      if (event.data === key) {
+        cache = await get();
+        _emitChange();
+      }
+    });
   }
 
   return {
@@ -155,3 +214,25 @@ export const createStorage = <D = string>(
     subscribe,
   };
 };
+
+/** Migration only: remove retired sync credentials without touching reading data. */
+const removeLegacySyncCredentials = async function removeLegacySyncCredentials(): Promise<void> {
+  const keys = ['read-later-cloudkit', 'read-later-sync-status'];
+  if (chrome) {
+    await chrome.storage.local.remove(keys);
+    return;
+  }
+  if (typeof indexedDB !== 'undefined') {
+    const db = await openWebDatabase();
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction('settings', 'readwrite');
+      for (const key of keys) transaction.objectStore('settings').delete(key);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  }
+  for (const key of keys) globalThis.localStorage?.removeItem(key);
+};
+
+export { createStorage, removeLegacySyncCredentials };

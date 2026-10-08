@@ -1,0 +1,7 @@
+{
+  "extends": "@extension/tsconfig/base",
+  "compilerOptions": {
+    "types": ["vite/client", "chrome", "node"]
+  },
+  "include": ["src", "vite.config.ts"]
+}

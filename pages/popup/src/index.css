@@ -1,9 +1,2 @@
-@import '@extension/ui/global.css';
-
-body {
-  width: 600px;
-  height: 600px;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-}
+@import '@extension/ui/reading-library.css';
+body { width: 400px; height: 600px; overflow: hidden; }

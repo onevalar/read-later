@@ -1,0 +1,20 @@
+{
+  "name": "@extension/library",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5181 --strictPort",
+    "build": "vite build",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@extension/ui": "workspace:*",
+    "@extension/shared": "workspace:*",
+    "@extension/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "@extension/tsconfig": "workspace:*",
+    "@vitejs/plugin-react-swc": "^3.9.0"
+  }
+}

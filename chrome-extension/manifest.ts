@@ -24,7 +24,7 @@ const manifest = {
   name: '__MSG_extensionName__',
   version: packageJson.version,
   description: '__MSG_extensionDescription__',
-  permissions: ['storage', 'contextMenus', 'tabs', 'activeTab'],
+  permissions: ['storage', 'contextMenus', 'tabs', 'activeTab', 'scripting', 'alarms'],
   options_page: 'options/index.html',
   commands: {
     'save-page': {
@@ -55,7 +55,7 @@ const manifest = {
         'icons/icon-16-light.png',
         'icons/icon-16-dark.png',
         'icons/icon-32-light.png',
-        'icons/icon-32-dark.png'
+        'icons/icon-32-dark.png',
       ],
       matches: ['<all_urls>'],
     },

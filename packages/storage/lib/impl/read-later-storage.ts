@@ -1,7 +1,9 @@
+import { materializeOperations, mergeOperations, operationsForChange } from './library-operations.js';
 import { createStorage, StorageEnum } from '../base/index.js';
+import type { LibraryOperation } from './library-operations.js';
 
 // 保存的页面数据结构
-export interface SavedPage {
+interface SavedPage {
   id: string;
   url: string;
   title: string;
@@ -11,19 +13,26 @@ export interface SavedPage {
   savedAt: number; // 保存时间戳
   visitedAt?: number; // 最后访问时间
   notes?: string; // 用户笔记
+  articleText?: string; // 保存时提取的纯文本，手机和离线阅读使用
+  progress?: number; // 0..1
 }
 
 // Read Later 状态类型
-export interface ReadLaterState {
+interface ReadLaterState {
   pages: SavedPage[];
   allTags: string[]; // 所有使用过的标签（始终由 pages 推导，不单独维护）
+  operations?: LibraryOperation[];
 }
 
 // 保存结果
-export type SaveResult = 'saved' | 'duplicate' | 'unsupported';
+type SaveResult = 'saved' | 'duplicate' | 'unsupported';
+type SaveInput = { url: string; title: string; favicon?: string; articleText?: string };
+type SaveReceipt = { pageId: string; url: string; operationId: string };
+type SaveOutcome = { result: 'saved'; receipt: SaveReceipt } | { result: 'duplicate' | 'unsupported' };
+type UndoSaveResult = 'undone' | 'changed' | 'missing';
 
 // 只允许保存普通网页，chrome://、file://、about: 等一律拒绝
-export function isSavableUrl(url: string | undefined): url is string {
+const isSavableUrl = function isSavableUrl(url: string | undefined): url is string {
   if (!url) return false;
   try {
     const { protocol } = new URL(url);
@@ -31,15 +40,15 @@ export function isSavableUrl(url: string | undefined): url is string {
   } catch {
     return false;
   }
-}
+};
 
 // 域名匹配：example.com 同时匹配 example.com 和 *.example.com，不会误中 dropbox.com 这类
-function hostIs(hostname: string, ...domains: string[]): boolean {
+const hostIs = function hostIs(hostname: string, ...domains: string[]): boolean {
   return domains.some(d => hostname === d || hostname.endsWith(`.${d}`));
-}
+};
 
 // 智能分类：根据 URL 域名和标题识别内容类型和来源
-export function generateAutoTags(url: string, title: string): string[] {
+const generateAutoTags = function generateAutoTags(url: string, title: string): string[] {
   const autoTags: string[] = [];
   const titleLower = title.toLowerCase();
 
@@ -132,7 +141,7 @@ export function generateAutoTags(url: string, title: string): string[] {
 
   // 去重（比如 Medium 和标题 article 会重复）
   return Array.from(new Set(autoTags));
-}
+};
 
 // 创建存储
 const storage = createStorage<ReadLaterState>(
@@ -150,8 +159,9 @@ const storage = createStorage<ReadLaterState>(
 const createId = () => `page-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
 // allTags 永远由页面推导，避免删除/改标签后残留
-const withDerivedTags = (pages: SavedPage[]): ReadLaterState => ({
+const withDerivedTags = (pages: SavedPage[], operations: LibraryOperation[] = []): ReadLaterState => ({
   pages,
+  operations,
   allTags: Array.from(new Set(pages.flatMap(p => p.tags))),
 });
 
@@ -175,31 +185,64 @@ const sanitizeImportedPage = (raw: unknown): SavedPage | null => {
     savedAt: typeof item.savedAt === 'number' ? item.savedAt : Date.now(),
     visitedAt: typeof item.visitedAt === 'number' ? item.visitedAt : undefined,
     notes: typeof item.notes === 'string' ? item.notes : undefined,
+    articleText: typeof item.articleText === 'string' ? item.articleText.slice(0, 120000) : undefined,
+    progress:
+      typeof item.progress === 'number' && Number.isFinite(item.progress)
+        ? Math.max(0, Math.min(1, item.progress))
+        : undefined,
   };
 };
 
 // 同一个上下文内的写入排队执行；每次写入前重新读取最新数据，
 // 避免 background 和 popup 同时写时互相覆盖
 let writeQueue: Promise<unknown> = Promise.resolve();
-const mutate = <T>(fn: (pages: SavedPage[]) => { pages: SavedPage[]; result: T }): Promise<T> => {
-  const run = async () => {
-    const fresh = await storage.get();
-    const { pages, result } = fn(fresh.pages);
-    await storage.set(() => withDerivedTags(pages));
-    return result;
-  };
-  const next = writeQueue.then(run, run);
+const queueWrite = <T>(run: () => Promise<T>): Promise<T> => {
+  const locked = () => (globalThis.navigator?.locks ? navigator.locks.request('read-later-library-write', run) : run());
+  const next = writeQueue.then(locked, locked);
   writeQueue = next.catch(() => undefined);
   return next;
 };
+const mutate = <T>(fn: (pages: SavedPage[]) => { pages: SavedPage[]; result: T }): Promise<T> =>
+  queueWrite(async () => {
+    const fresh = await storage.get();
+    const { pages, result } = fn(fresh.pages);
+    await storage.set(() => withDerivedTags(pages, operationsForChange(fresh.pages, pages, fresh.operations ?? [])));
+    return result;
+  });
+
+const saveWithReceipt = ({ url, title, favicon, articleText }: SaveInput): Promise<SaveOutcome> =>
+  queueWrite(async () => {
+    if (!isSavableUrl(url)) return { result: 'unsupported' };
+    const fresh = await storage.get();
+    if (fresh.pages.some(page => page.url === url)) return { result: 'duplicate' };
+    const page: SavedPage = {
+      id: createId(),
+      url,
+      title: title || url,
+      favicon,
+      articleText: articleText?.slice(0, 120000),
+      tags: [],
+      autoTags: generateAutoTags(url, title || url),
+      savedAt: Date.now(),
+    };
+    const pages = [page, ...fresh.pages];
+    const operations = operationsForChange(fresh.pages, pages, fresh.operations ?? []);
+    const created = operations.find(op => op.kind === 'create' && op.url === url && op.patch.id === page.id);
+    if (!created) throw new Error('The save could not be recorded.');
+    await storage.set(withDerivedTags(pages, operations));
+    return { result: 'saved', receipt: { pageId: page.id, url, operationId: created.id } };
+  });
 
 // Read Later 存储类型
-export interface ReadLaterStorageType {
+interface ReadLaterStorageType {
   get: typeof storage.get;
   set: typeof storage.set;
   subscribe: typeof storage.subscribe;
   getSnapshot: typeof storage.getSnapshot;
-  savePage: (page: { url: string; title: string; favicon?: string }) => Promise<SaveResult>;
+  savePage: (page: SaveInput) => Promise<SaveResult>;
+  savePageWithReceipt: (page: SaveInput) => Promise<SaveOutcome>;
+  undoSave: (receipt: SaveReceipt) => Promise<UndoSaveResult>;
+  mergeCloudOperations: (operations: LibraryOperation[]) => Promise<void>;
   removePage: (id: string) => Promise<void>;
   updatePage: (id: string, updates: Partial<SavedPage>) => Promise<void>;
   addTag: (pageId: string, tag: string) => Promise<void>;
@@ -212,30 +255,46 @@ export interface ReadLaterStorageType {
 }
 
 // 导出 Read Later 存储
-export const readLaterStorage: ReadLaterStorageType = {
+const readLaterStorage: ReadLaterStorageType = {
   ...storage,
 
   // 保存页面：所有入口（右键、快捷键、popup 按钮）统一走这里，统一做过滤和去重
-  savePage: ({ url, title, favicon }) =>
-    mutate(pages => {
-      if (!isSavableUrl(url)) return { pages, result: 'unsupported' as SaveResult };
-      if (pages.some(p => p.url === url)) return { pages, result: 'duplicate' as SaveResult };
+  savePage: async page => (await saveWithReceipt(page)).result,
+  savePageWithReceipt: saveWithReceipt,
 
-      const newPage: SavedPage = {
-        id: createId(),
-        url,
-        title: title || url,
-        favicon,
-        tags: [],
-        autoTags: generateAutoTags(url, title || url),
-        savedAt: Date.now(),
-      };
-      return { pages: [newPage, ...pages], result: 'saved' as SaveResult };
+  // Only the unchanged create operation may be undone. An edit, read or re-save wins.
+  undoSave: receipt =>
+    queueWrite(async () => {
+      if (
+        !receipt ||
+        typeof receipt.pageId !== 'string' ||
+        typeof receipt.url !== 'string' ||
+        typeof receipt.operationId !== 'string'
+      )
+        return 'missing';
+      const fresh = await storage.get();
+      const page = fresh.pages.find(p => p.id === receipt.pageId && p.url === receipt.url);
+      if (!page) return 'missing';
+      const history = (fresh.operations ?? []).filter(op => op.url === receipt.url);
+      const latest = history[history.length - 1];
+      if (latest?.id !== receipt.operationId || latest.kind !== 'create' || latest.patch.id !== receipt.pageId)
+        return 'changed';
+      const pages = fresh.pages.filter(p => p.id !== receipt.pageId);
+      await storage.set(withDerivedTags(pages, operationsForChange(fresh.pages, pages, fresh.operations ?? [])));
+      return 'undone';
     }),
 
   // 删除页面
-  removePage: id =>
-    mutate(pages => ({ pages: pages.filter(p => p.id !== id), result: undefined })),
+  removePage: id => mutate(pages => ({ pages: pages.filter(p => p.id !== id), result: undefined })),
+
+  mergeCloudOperations: remote =>
+    queueWrite(async () => {
+      const fresh = await storage.get();
+      const local = operationsForChange(fresh.pages, fresh.pages, fresh.operations ?? []);
+      const operations = mergeOperations(local, remote);
+      if (JSON.stringify(operations) === JSON.stringify(fresh.operations ?? [])) return;
+      await storage.set(withDerivedTags(materializeOperations(operations), operations));
+    }),
 
   // 更新页面
   updatePage: (id, updates) =>
@@ -323,3 +382,15 @@ export const readLaterStorage: ReadLaterStorageType = {
     });
   },
 };
+
+export type {
+  SavedPage,
+  ReadLaterState,
+  SaveResult,
+  SaveInput,
+  SaveReceipt,
+  SaveOutcome,
+  UndoSaveResult,
+  ReadLaterStorageType,
+};
+export { isSavableUrl, generateAutoTags, readLaterStorage };
