@@ -25,10 +25,10 @@ interface ReadLaterState {
 }
 
 // 保存结果
-type SaveResult = 'saved' | 'duplicate' | 'unsupported';
+type SaveResult = 'saved' | 'duplicate' | 'unsupported' | 'error';
 type SaveInput = { url: string; title: string; favicon?: string; articleText?: string };
 type SaveReceipt = { pageId: string; url: string; operationId: string };
-type SaveOutcome = { result: 'saved'; receipt: SaveReceipt } | { result: 'duplicate' | 'unsupported' };
+type SaveOutcome = { result: 'saved'; receipt: SaveReceipt } | { result: 'duplicate' | 'unsupported' | 'error' };
 type UndoSaveResult = 'undone' | 'changed' | 'missing';
 
 // 只允许保存普通网页，chrome://、file://、about: 等一律拒绝
@@ -299,7 +299,9 @@ const readLaterStorage: ReadLaterStorageType = {
   // 更新页面
   updatePage: (id, updates) =>
     mutate(pages => ({
-      pages: pages.map(p => (p.id === id ? { ...p, ...updates, id: p.id } : p)),
+      pages: pages.map(p =>
+        p.id === id ? { ...p, ...updates, id: p.id, title: updates.title?.trim() || p.title } : p,
+      ),
       result: undefined,
     })),
 

@@ -21,6 +21,8 @@ tsconfig.tsbuildinfo
 .DS_Store
 .idea
 **/.turbo
+.amp/portals/
+.amp/in/artifacts/
 
 # compiled
 **/tailwind-output.css

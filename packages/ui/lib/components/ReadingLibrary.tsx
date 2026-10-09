@@ -303,7 +303,9 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
           ? ''
           : response?.result === 'duplicate'
             ? text('这篇内容已在阅读库中。', 'This page is already in your library.')
-            : text('此页面无法保存。', 'This page cannot be saved.'),
+            : response?.result === 'error'
+              ? text('保存失败，请重试。', 'Failed to save page. Please try again.')
+              : text('此页面无法保存。', 'This page cannot be saved.'),
       );
     });
   const addUrl = () =>
@@ -354,7 +356,7 @@ const ReadingLibraryContent = function ReadingLibraryContent({ popup = false }: 
     void run(async () => {
       if (!editing) return;
       await readLaterStorage.updatePage(editing.id, {
-        title: title.trim() || editing.url,
+        title: title.trim() || undefined,
         notes: notes.trim(),
         tags: [
           ...new Set(

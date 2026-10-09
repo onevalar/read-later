@@ -180,7 +180,7 @@ const saveCurrentPage = async function saveCurrentPage(tab?: chrome.tabs.Tab): P
   } catch (error) {
     console.error('Failed to save page:', error);
     await showBadge('!', '#dc2626');
-    return { result: 'unsupported' };
+    return { result: 'error' };
   }
 };
 

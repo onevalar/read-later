@@ -1,0 +1,7 @@
+services:
+  library:
+    command: pnpm -F @extension/library exec vite --host 127.0.0.1 --port "$PORT" --strictPort
+    health: /
+    portal:
+      title: Read Later 阅读库
+      description: 使用独立的浏览器本地数据；无需登录即可验证界面，登录后才会云同步。

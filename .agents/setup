@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+node_version="$(cat .nvmrc)"
+pnpm_version="$(node -p "require('./package.json').packageManager.split('@')[1]")"
+case "$(uname -m)" in
+  x86_64) arch=x64 ;;
+  aarch64) arch=arm64 ;;
+  *) echo "Unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+toolchain="$HOME/.local/share/read-later/node-v${node_version}-linux-${arch}"
+
+echo "[setup] Preparing Node ${node_version} and pnpm ${pnpm_version}"
+if [[ ! -x "$toolchain/bin/node" ]]; then
+  mkdir -p "$(dirname "$toolchain")"
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+  curl -fsSL "https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${arch}.tar.xz" -o "$archive"
+  tar -xJf "$archive" -C "$(dirname "$toolchain")"
+  rm -f "$archive"
+  trap - EXIT
+fi
+export PATH="$toolchain/bin:$PATH"
+if [[ ! -x "$toolchain/bin/pnpm" ]] || [[ "$(pnpm --version)" != "$pnpm_version" ]]; then
+  npm install --global --prefix "$toolchain" "pnpm@${pnpm_version}"
+fi
+
+# Supervised services and future Amp commands run in separate login shells.
+# Limit the pinned toolchain to this repository, without replacing the orb's Node.
+profile_marker="# Read Later orb toolchain"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+  cat >> "$HOME/.bash_profile" <<EOF
+
+$profile_marker
+if [[ "\$PWD" == "$repo_root" || "\$PWD" == "$repo_root/"* ]]; then
+  export PATH="$toolchain/bin:\$PATH"
+fi
+EOF
+fi
+
+if [[ ! -f .env ]]; then
+  cp .example.env .env
+fi
+echo "[setup] Installing locked dependencies"
+time pnpm install --frozen-lockfile
+echo "[setup] Building the extension and web library"
+pnpm set-global-env
+time pnpm exec turbo build --filter=@extension/library --filter=chrome-extension --filter=@extension/options --filter=@extension/popup --concurrency=2
+echo "[setup] Ready: pnpm test; amp orb services ensure; load dist/ as an unpacked extension"

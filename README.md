@@ -118,7 +118,7 @@ Cloudflare 仍只托管静态网页；阅读内容上传到所选 Supabase 项�
 
 ```sh
 pnpm install --frozen-lockfile
-pnpm exec tsx --test tests/*.test.ts
+pnpm test
 pnpm exec turbo type-check --filter=@extension/storage --filter=@extension/ui --filter=@extension/library --concurrency=2
 pnpm exec turbo build --filter=@extension/library --filter=chrome-extension --filter=@extension/options --filter=@extension/popup --concurrency=2
 ```
@@ -130,7 +130,29 @@ Cloudflare Pages 上传仅包含 web-dist 的静态文件，不上传阅读记�
 
 测试覆盖本地保存、撤销、离线壳、操作合并、SDK 登录/刷新、分页、分批重试、账号边界，
 以及使用 PGlite 执行实际 PostgreSQL RLS 脚本的两账号和匿名权限测试。
+另有独立浏览器上下文的并发保存、导入与编辑、空标题和写入失败后恢复测试。
 这些自动化测试使用虚拟用户和本地数据，不能替代真实项目的双端验收。
+
+### Amp 云端开发环境
+
+新建 orb 时，`.agents/setup` 自动安装 `.nvmrc` 指定的 Node.js 和项目指定的 pnpm，
+按锁定版本安装依赖，并构建扩展及网页。可手动重复运行，不覆盖已有 `.env`。
+无需填写账号密码或数据库密钥；准备过程不会登录、写入云端或部署网页。
+
+```sh
+.agents/setup
+pnpm test
+amp orb services ensure
+```
+
+`.amp/services.yaml` 启动网页阅读库预览，由 orb 托管进程，支持暂停后恢复。
+`amp orb services ensure` 返回可打开的阅读库 Portal 链接；
+用 `amp orb service logs library` 查看启动情况。
+扩展由准备脚本一次构建，不默认开启全项目持续构建，以保留云端浏览器和测试所需内存；
+修改扩展后可重新运行上面的限定范围构建命令。
+扩展仍从 `dist/` 加载，Portal 不代替真实浏览器的扩展验收。
+预览使用当前浏览器的独立本地数据；无需登录即可验证新增、编辑和搜索。
+登录真实阅读库账号会触发云同步，日常开发不要用真实账号做破坏性测试。
 
 参考：[Supabase SDK](https://supabase.com/docs/reference/javascript/initializing)、
 [密码登录](https://supabase.com/docs/guides/auth/passwords)、
