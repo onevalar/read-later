@@ -14,9 +14,14 @@ import type { SyncStatus } from '@extension/storage';
 const text = (cn: string, en: string) => ((globalThis.navigator?.language ?? 'en').startsWith('zh') ? cn : en);
 const syncLabel = function syncLabel(status: SyncStatus): string {
   if ((status.phase === 'pending' || status.phase === 'offline') && status.pendingCount)
-    return text('等待同步 · ', 'Waiting to sync · ') + status.pendingCount + text(' 项改动', ' changes');
+    return (
+      (status.phase === 'offline' ? text('离线 · ', 'Offline · ') : '') +
+      text('等待同步 · ', 'Waiting to sync · ') +
+      status.pendingCount +
+      text(' 项改动', ' changes')
+    );
   return {
-    local: text('仅保存在此设备', 'Saved on this device'),
+    local: text('未开启云同步', 'Cloud sync is off'),
     pending: text('等待同步', 'Sync pending'),
     offline: text('离线 · 等待同步', 'Offline · sync pending'),
     'sign-in': text('需要登录', 'Sign in to sync'),
@@ -88,8 +93,8 @@ const SyncSettings = function SyncSettings({ status }: { status: SyncStatus }) {
             }}>
             <p className="reading-muted">
               {text(
-                '手机和电脑使用同一个阅读库账号。登录后，本地阅读内容、笔记和进度将合并到你的云端阅读库。',
-                'Use the same library account on phone and computer. Signing in merges your local reading, notes and progress with your cloud library.',
+                '未登录时，内容保存在此设备。手机和电脑登录同一个阅读库账号后，保存的内容、笔记和进度会自动同步。',
+                'Until you sign in, content stays on this device. Sign in to the same library account on phone and computer to automatically sync saved pages, notes and progress.',
               )}
             </p>
             <label>
